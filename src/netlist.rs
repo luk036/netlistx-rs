@@ -1,6 +1,13 @@
 use petgraph::Graph;
 use std::collections::{HashMap, HashSet};
 
+/// A struct representing a netlist, which is a graph-like data structure used in electronic design automation.
+/// 
+/// The `Netlist` struct contains information about the modules and nets in the netlist, as well as the underlying graph
+/// representation and various metadata such as weights and fixed modules.
+///
+/// The `'a` lifetime parameter is used to ensure that the references to module and net names in the `grph`, `modules`, and `nets`
+/// fields have the same lifetime as the `Netlist` struct itself.
 struct Netlist<'a> {
     num_pads: i32,
     cost_model: i32,
@@ -16,6 +23,20 @@ struct Netlist<'a> {
     max_net_degree: u32,
 }
 
+/// Creates a test netlist for use in unit tests or other purposes.
+///
+/// This function creates a simple netlist with a few modules and nets, and returns a `Netlist` struct
+/// that represents this netlist. The netlist has the following properties:
+///
+/// - 6 modules: "a0", "a1", "a2", "a3", "a4", and "a5"
+/// - 3 nets: "a3", "a4", and "a5"
+/// - Module weights for "a0", "a1", and "a2" are 533, 543, and 532 respectively
+/// - No net weights are set
+/// - No fixed modules
+/// - Maximum degree and maximum net degree are both 0
+///
+/// This function is primarily intended for use in unit tests, where a simple, known netlist is needed
+/// for testing purposes.
 fn create_test_netlist<'a>() -> Netlist<'a> {
     let mut grph = Graph::new();
     let a0 = grph.add_node("a0");
