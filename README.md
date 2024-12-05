@@ -1,4 +1,4 @@
-# 🕸 netlistx-rs
+# 🥅 netlistx-rs
 
 [![Crates.io](https://img.shields.io/crates/v/netlistx-rs.svg)](https://crates.io/crates/netlistx-rs)
 [![Docs.rs](https://docs.rs/netlistx-rs/badge.svg)](https://docs.rs/netlistx-rs)
