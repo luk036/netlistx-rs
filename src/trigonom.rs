@@ -88,6 +88,22 @@ mod tests {
         assert_eq!(archimedes(&q_1, &q_2, &q_3), Ratio::<i32>::new(23, 144));
     }
 
+    #[test]
+    fn test_archimedes_negative() {
+        let q_1 = Ratio::<i32>::new(-1, 2);
+        let q_2 = Ratio::<i32>::new(1, 4);
+        let q_3 = Ratio::<i32>::new(1, 6);
+        assert_eq!(archimedes(&q_1, &q_2, &q_3), Ratio::<i32>::new(-97, 144));
+    }
+
+    #[test]
+    fn test_archimedes_zero() {
+        let q_1 = Ratio::<i32>::new(0, 1);
+        let q_2 = Ratio::<i32>::new(1, 4);
+        let q_3 = Ratio::<i32>::new(1, 6);
+        assert_eq!(archimedes(&q_1, &q_2, &q_3), Ratio::<i32>::new(-1, 144));
+    }
+
     // #[test]
     // fn test_archimedes4() {
     //     let q_1 = Fraction::<i64>::new(1, 2);

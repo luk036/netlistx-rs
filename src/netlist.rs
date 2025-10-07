@@ -133,4 +133,49 @@ mod tests {
         assert_eq!(netlist.grph.node_count(), 6);
         assert_eq!(netlist.grph.edge_count(), 3);
     }
+
+    #[test]
+    fn test_new_netlist() {
+        let netlist = Netlist::new();
+        assert_eq!(netlist.num_modules, 0);
+        assert_eq!(netlist.num_nets, 0);
+        assert_eq!(netlist.grph.node_count(), 0);
+        assert_eq!(netlist.grph.edge_count(), 0);
+    }
+
+    #[test]
+    fn test_add_module() {
+        let mut netlist = Netlist::new();
+        netlist.add_module("m1".to_string());
+        assert_eq!(netlist.num_modules, 1);
+        assert_eq!(netlist.modules, vec!["m1".to_string()]);
+        assert_eq!(netlist.grph.node_count(), 1);
+    }
+
+    #[test]
+    fn test_add_net() {
+        let mut netlist = Netlist::new();
+        netlist.add_net("n1".to_string());
+        assert_eq!(netlist.num_nets, 1);
+        assert_eq!(netlist.nets, vec!["n1".to_string()]);
+        assert_eq!(netlist.grph.node_count(), 1);
+    }
+
+    #[test]
+    fn test_add_edge() {
+        let mut netlist = Netlist::new();
+        netlist.add_module("m1".to_string());
+        netlist.add_net("n1".to_string());
+        netlist.add_edge("n1", "m1");
+        assert_eq!(netlist.grph.edge_count(), 1);
+    }
+
+    #[test]
+    fn test_default_netlist() {
+        let netlist: Netlist = Default::default();
+        assert_eq!(netlist.num_modules, 0);
+        assert_eq!(netlist.num_nets, 0);
+        assert_eq!(netlist.grph.node_count(), 0);
+        assert_eq!(netlist.grph.edge_count(), 0);
+    }
 }
