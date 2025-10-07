@@ -48,6 +48,12 @@ use core::ops::{Add, Mul, Sub};
 /// let q_3 = Rational32::new(1, 6);
 /// let quadrea = archimedes(&q_1, &q_2, &q_3);
 /// assert_eq!(quadrea, Rational32::new(23, 144));
+///
+/// let q_1 = 1;
+/// let q_2 = 2;
+/// let q_3 = 3;
+/// let quadrea = archimedes(&q_1, &q_2, &q_3);
+/// assert_eq!(quadrea, 8);
 /// ```
 #[inline]
 pub fn archimedes<T>(q_1: &T, q_2: &T, q_3: &T) -> T

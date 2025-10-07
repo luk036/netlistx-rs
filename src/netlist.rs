@@ -23,6 +23,16 @@ pub struct Netlist {
 
 impl Netlist {
     /// Creates a new, empty `Netlist`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use netlistx_rs::netlist::Netlist;
+    ///
+    /// let netlist = Netlist::new();
+    /// assert_eq!(netlist.num_modules, 0);
+    /// assert_eq!(netlist.num_nets, 0);
+    /// ```
     pub fn new() -> Self {
         Netlist {
             num_pads: 0,
@@ -41,6 +51,16 @@ impl Netlist {
     }
 
     /// Adds a module to the netlist.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use netlistx_rs::netlist::Netlist;
+    ///
+    /// let mut netlist = Netlist::new();
+    /// netlist.add_module("m1".to_string());
+    /// assert_eq!(netlist.num_modules, 1);
+    /// ```
     pub fn add_module(&mut self, module: String) {
         self.modules.push(module.clone());
         self.grph.add_node(module);
@@ -48,6 +68,16 @@ impl Netlist {
     }
 
     /// Adds a net to the netlist.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use netlistx_rs::netlist::Netlist;
+    ///
+    /// let mut netlist = Netlist::new();
+    /// netlist.add_net("n1".to_string());
+    /// assert_eq!(netlist.num_nets, 1);
+    /// ```
     pub fn add_net(&mut self, net: String) {
         self.nets.push(net.clone());
         self.grph.add_node(net);
@@ -55,6 +85,18 @@ impl Netlist {
     }
 
     /// Adds an edge between a net and a module.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use netlistx_rs::netlist::Netlist;
+    ///
+    /// let mut netlist = Netlist::new();
+    /// netlist.add_module("m1".to_string());
+    /// netlist.add_net("n1".to_string());
+    /// netlist.add_edge("n1", "m1");
+    /// assert_eq!(netlist.grph.edge_count(), 1);
+    /// ```
     pub fn add_edge(&mut self, net: &str, module: &str) {
         let net_index = self.grph.node_indices().find(|i| self.grph[*i] == net);
         let module_index = self.grph.node_indices().find(|i| self.grph[*i] == module);
