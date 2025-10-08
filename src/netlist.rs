@@ -146,7 +146,7 @@ mod tests {
         .iter()
         .cloned()
         .collect();
-        grph.extend_with_edges(&[(a3, a0), (a3, a1), (a5, a0)]);
+        grph.extend_with_edges([(a3, a0), (a3, a1), (a5, a0)]);
         let modules = vec!["a0".to_string(), "a1".to_string(), "a2".to_string()];
         let nets = vec!["a3".to_string(), "a4".to_string(), "a5".to_string()];
         let mut hyprgraph = Netlist {
