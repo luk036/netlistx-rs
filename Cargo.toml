@@ -9,7 +9,7 @@ license = "MIT OR Apache-2.0"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-petgraph = "0.8.2"
+petgraph = "0.8.3"
 
 [dev-dependencies]
 fractions-rs = "0.1.5"
