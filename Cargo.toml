@@ -2,15 +2,47 @@
 name = "netlistx-rs"
 version = "0.1.2"
 edition = "2021"
+rust-version = "1.70"
 description = "Netlist (hypergraph) in Rust"
 repository = "https://github.com/luk036/netlistx-rs"
 license = "MIT OR Apache-2.0"
+keywords = ["netlist", "hypergraph", "eda", "vlsi", "partitioning"]
+categories = ["science", "algorithms", "data-structures"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
 petgraph = "0.8.2"
+indexmap = { version = "2.2", features = ["serde"] }
+thiserror = "1.0"
+
+[features]
+default = []
+serde = ["dep:serde", "indexmap/serde", "petgraph/serde"]
+rayon = ["dep:rayon"]
+quickcheck = ["dep:quickcheck"]
+
+[dependencies.serde]
+version = "1.0"
+features = ["derive"]
+optional = true
+
+[dependencies.rayon]
+version = "1.8"
+optional = true
+
+[dependencies.quickcheck]
+version = "1.0"
+optional = true
 
 [dev-dependencies]
 fractions-rs = "0.1.5"
 num-rational = "0.4.2"
+criterion = "0.5"
+quickcheck = "1.0"
+quickcheck_macros = "1.0"
+tempfile = "3.10"
+netlistx-rs = { path = ".", features = ["quickcheck"] }
+
+[profile.bench]
+debug = true
