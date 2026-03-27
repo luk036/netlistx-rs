@@ -42,6 +42,7 @@ pub struct PartitionResultData {
 ///
 /// A fast, iterative improvement algorithm for circuit partitioning.
 pub struct FiducciaMattheyses {
+    /// Maximum number of iterations for the algorithm
     pub max_iterations: usize,
 }
 
@@ -156,6 +157,7 @@ impl Default for FiducciaMattheyses {
 ///
 /// A classic graph partitioning algorithm for bipartitioning.
 pub struct KernighanLin {
+    /// Maximum number of iterations for the algorithm
     pub max_iterations: usize,
 }
 

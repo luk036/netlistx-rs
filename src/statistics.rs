@@ -6,7 +6,10 @@
 use crate::netlist::Netlist;
 use indexmap::IndexMap;
 
-/// Statistics about a netlist
+/// Statistics about a netlist, including module and net degree metrics.
+///
+/// This struct is created by [`NetlistStats::analyze`] and provides various
+/// statistical measures about the netlist structure.
 #[derive(Debug, Clone)]
 pub struct NetlistStats {
     /// Total number of modules
