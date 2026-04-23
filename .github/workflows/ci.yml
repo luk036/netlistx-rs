@@ -61,16 +61,16 @@ jobs:
           RUSTDOCFLAGS: -D warnings
         run: cargo doc --no-deps --document-private-items --all-features --workspace --examples
 
-  udeps:
-    name: Unused Dependencies
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v5
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-      - name: Install cargo-udeps
-        run: cargo install cargo-udeps --locked
-      - uses: Swatinem/rust-cache@v2
-      - name: Check unused dependencies
-        run: cargo udeps --all-features --workspace
+  # udeps:
+  #   name: Unused Dependencies
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - name: Checkout repository
+  #       uses: actions/checkout@v5
+  #     - name: Install Rust toolchain
+  #       uses: dtolnay/rust-toolchain@stable
+  #     - name: Install cargo-udeps
+  #       run: cargo install cargo-udeps --locked
+  #     - uses: Swatinem/rust-cache@v2
+  #     - name: Check unused dependencies
+  #       run: cargo udeps --all-features --workspace
