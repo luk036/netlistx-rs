@@ -1,0 +1,23 @@
+# Cargo configuration for netlistx-rs
+# https://doc.rust-lang.org/cargo/reference/config.html
+
+[alias]
+# Quick test with output
+t = "test --all-features --workspace -- --nocapture"
+
+# Run examples
+ex = "run --example"
+
+# Benchmarks
+bench = "bench --all-features"
+
+# Lint and format check
+check-all = ["fmt", "clippy", "test"]
+
+[build]
+# Enable incremental compilation for faster rebuilds during development
+incremental = true
+
+[target.'cfg(not(release))']
+# Enable debug info in development (not release)
+rustflags = ["-C", "debuginfo=1"]

@@ -1,0 +1,6 @@
+# Clippy configuration for netlistx-rs
+# https://rust-lang.github.io/rust-clippy/
+
+msrv = "1.70"
+cognitive-complexity-threshold = 60
+too-many-lines-threshold = 100
