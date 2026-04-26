@@ -529,6 +529,104 @@ mod tests {
         assert!(nets.contains(&"n1".to_string()));
         assert!(nets.contains(&"n2".to_string()));
     }
+
+    #[test]
+    fn test_has_module() {
+        let mut netlist = Netlist::new();
+        netlist.add_module("m1".to_string()).unwrap();
+        assert!(netlist.has_module("m1"));
+        assert!(!netlist.has_module("m2"));
+    }
+
+    #[test]
+    fn test_has_net() {
+        let mut netlist = Netlist::new();
+        netlist.add_net("n1".to_string()).unwrap();
+        assert!(netlist.has_net("n1"));
+        assert!(!netlist.has_net("n2"));
+    }
+
+    #[test]
+    fn test_add_module_empty_name() {
+        let mut netlist = Netlist::new();
+        let result = netlist.add_module("".to_string());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_add_net_empty_name() {
+        let mut netlist = Netlist::new();
+        let result = netlist.add_net("".to_string());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_add_duplicate_net() {
+        let mut netlist = Netlist::new();
+        netlist.add_net("n1".to_string()).unwrap();
+        let result = netlist.add_net("n1".to_string());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_builder_with_pads() {
+        let netlist = NetlistBuilder::new()
+            .add_module("m1")
+            .with_pads(10)
+            .build()
+            .unwrap();
+        assert_eq!(netlist.num_pads, 10);
+    }
+
+    #[test]
+    fn test_builder_with_cost_model() {
+        let netlist = NetlistBuilder::new()
+            .add_module("m1")
+            .with_cost_model(1)
+            .build()
+            .unwrap();
+        assert_eq!(netlist.cost_model, 1);
+    }
+
+    #[test]
+    fn test_default_netlist() {
+        let netlist: Netlist = Default::default();
+        assert_eq!(netlist.num_modules(), 0);
+        assert_eq!(netlist.num_nets(), 0);
+    }
+
+    #[test]
+    fn test_default_netlist_builder() {
+        let builder: NetlistBuilder = Default::default();
+        let netlist = builder.build().unwrap();
+        assert_eq!(netlist.num_modules(), 0);
+    }
+
+    #[test]
+    fn test_get_module_degree_nonexistent() {
+        let netlist = Netlist::new();
+        assert_eq!(netlist.get_module_degree("nonexistent"), 0);
+    }
+
+    #[test]
+    fn test_get_net_degree_nonexistent() {
+        let netlist = Netlist::new();
+        assert_eq!(netlist.get_net_degree("nonexistent"), 0);
+    }
+
+    #[test]
+    fn test_get_net_modules_empty() {
+        let netlist = Netlist::new();
+        let modules = netlist.get_net_modules("nonexistent");
+        assert!(modules.is_empty());
+    }
+
+    #[test]
+    fn test_get_module_nets_empty() {
+        let netlist = Netlist::new();
+        let nets = netlist.get_module_nets("nonexistent");
+        assert!(nets.is_empty());
+    }
 }
 
 #[cfg(test)]

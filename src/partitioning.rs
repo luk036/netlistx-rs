@@ -310,4 +310,72 @@ mod tests {
         let partition_data = result.unwrap();
         assert_eq!(partition_data.assignment.len(), 4);
     }
+
+    #[test]
+    fn test_fm_with_max_iterations() {
+        let fm = FiducciaMattheyses::new().with_max_iterations(50);
+        assert_eq!(fm.max_iterations, 50);
+    }
+
+    #[test]
+    fn test_kernighan_lin_new() {
+        let kl = KernighanLin::new();
+        assert_eq!(kl.max_iterations, 100);
+    }
+
+    #[test]
+    fn test_kernighan_lin_partition() {
+        let mut netlist = Netlist::new();
+        let _ = netlist.add_module("m1".to_string());
+        let _ = netlist.add_module("m2".to_string());
+        let _ = netlist.add_module("m3".to_string());
+        let _ = netlist.add_module("m4".to_string());
+        let _ = netlist.add_net("n1".to_string());
+        let _ = netlist.add_net("n2".to_string());
+        netlist.add_edge("n1", "m1").unwrap();
+        netlist.add_edge("n1", "m2").unwrap();
+        netlist.add_edge("n2", "m3").unwrap();
+        netlist.add_edge("n2", "m4").unwrap();
+
+        let kl = KernighanLin::new();
+        let result = kl.partition(&netlist, 0.5);
+        assert!(result.is_ok());
+        let partition_data = result.unwrap();
+        assert_eq!(partition_data.assignment.len(), 4);
+    }
+
+    #[test]
+    fn test_kernighan_lin_with_max_iterations() {
+        let kl = KernighanLin::new().with_max_iterations(50);
+        assert_eq!(kl.max_iterations, 50);
+    }
+
+    #[test]
+    fn test_kl_partition_empty_netlist() {
+        let netlist = Netlist::new();
+        let kl = KernighanLin::new();
+        let result = kl.partition(&netlist, 0.5);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_kl_invalid_balance() {
+        let mut netlist = Netlist::new();
+        let _ = netlist.add_module("m1".to_string());
+        let kl = KernighanLin::new();
+        let result = kl.partition(&netlist, -0.1);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_default_fm() {
+        let fm: FiducciaMattheyses = Default::default();
+        assert_eq!(fm.max_iterations, 100);
+    }
+
+    #[test]
+    fn test_default_kl() {
+        let kl: KernighanLin = Default::default();
+        assert_eq!(kl.max_iterations, 100);
+    }
 }

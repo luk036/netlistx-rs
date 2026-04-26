@@ -173,4 +173,122 @@ mod tests {
         assert_eq!(stats.max_module_degree, 2);
         assert_eq!(stats.max_net_degree, 2);
     }
+
+    #[test]
+    fn test_stats_accessor_max_module_degree() {
+        let mut netlist = Netlist::new();
+        let _ = netlist.add_module("m1".to_string());
+        let _ = netlist.add_module("m2".to_string());
+        let _ = netlist.add_module("m3".to_string());
+        let _ = netlist.add_net("n1".to_string());
+        let _ = netlist.add_net("n2".to_string());
+        netlist.add_edge("n1", "m1").unwrap();
+        netlist.add_edge("n1", "m2").unwrap();
+        netlist.add_edge("n2", "m2").unwrap();
+        netlist.add_edge("n2", "m3").unwrap();
+
+        let stats = NetlistStats::analyze(&netlist);
+        assert_eq!(stats.max_module_degree(), 2);
+    }
+
+    #[test]
+    fn test_stats_accessor_max_net_degree() {
+        let mut netlist = Netlist::new();
+        let _ = netlist.add_module("m1".to_string());
+        let _ = netlist.add_module("m2".to_string());
+        let _ = netlist.add_module("m3".to_string());
+        let _ = netlist.add_net("n1".to_string());
+        let _ = netlist.add_net("n2".to_string());
+        netlist.add_edge("n1", "m1").unwrap();
+        netlist.add_edge("n1", "m2").unwrap();
+        netlist.add_edge("n2", "m2").unwrap();
+        netlist.add_edge("n2", "m3").unwrap();
+
+        let stats = NetlistStats::analyze(&netlist);
+        assert_eq!(stats.max_net_degree(), 2);
+    }
+
+    #[test]
+    fn test_stats_pin_module_ratio() {
+        let mut netlist = Netlist::new();
+        let _ = netlist.add_module("m1".to_string());
+        let _ = netlist.add_module("m2".to_string());
+        let _ = netlist.add_module("m3".to_string());
+        let _ = netlist.add_net("n1".to_string());
+        let _ = netlist.add_net("n2".to_string());
+        netlist.add_edge("n1", "m1").unwrap();
+        netlist.add_edge("n1", "m2").unwrap();
+        netlist.add_edge("n2", "m2").unwrap();
+        netlist.add_edge("n2", "m3").unwrap();
+
+        let stats = NetlistStats::analyze(&netlist);
+        let ratio = stats.pin_module_ratio();
+        assert!((ratio - 4.0 / 3.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_stats_pin_net_ratio() {
+        let mut netlist = Netlist::new();
+        let _ = netlist.add_module("m1".to_string());
+        let _ = netlist.add_module("m2".to_string());
+        let _ = netlist.add_module("m3".to_string());
+        let _ = netlist.add_net("n1".to_string());
+        let _ = netlist.add_net("n2".to_string());
+        netlist.add_edge("n1", "m1").unwrap();
+        netlist.add_edge("n1", "m2").unwrap();
+        netlist.add_edge("n2", "m2").unwrap();
+        netlist.add_edge("n2", "m3").unwrap();
+
+        let stats = NetlistStats::analyze(&netlist);
+        assert_eq!(stats.pin_net_ratio(), 2.0);
+    }
+
+    #[test]
+    fn test_stats_pin_module_ratio_empty() {
+        let netlist = Netlist::new();
+        let stats = NetlistStats::analyze(&netlist);
+        assert_eq!(stats.pin_module_ratio(), 0.0);
+    }
+
+    #[test]
+    fn test_stats_pin_net_ratio_empty() {
+        let netlist = Netlist::new();
+        let stats = NetlistStats::analyze(&netlist);
+        assert_eq!(stats.pin_net_ratio(), 0.0);
+    }
+
+    #[test]
+    fn test_stats_avg_module_degree() {
+        let mut netlist = Netlist::new();
+        let _ = netlist.add_module("m1".to_string());
+        let _ = netlist.add_module("m2".to_string());
+        let _ = netlist.add_module("m3".to_string());
+        let _ = netlist.add_net("n1".to_string());
+        let _ = netlist.add_net("n2".to_string());
+        netlist.add_edge("n1", "m1").unwrap();
+        netlist.add_edge("n1", "m2").unwrap();
+        netlist.add_edge("n2", "m2").unwrap();
+        netlist.add_edge("n2", "m3").unwrap();
+
+        let stats = NetlistStats::analyze(&netlist);
+        assert!((stats.avg_module_degree() - 1.333) < 0.001);
+    }
+
+    #[test]
+    fn test_stats_min_degree() {
+        let mut netlist = Netlist::new();
+        let _ = netlist.add_module("m1".to_string());
+        let _ = netlist.add_module("m2".to_string());
+        let _ = netlist.add_module("m3".to_string());
+        let _ = netlist.add_net("n1".to_string());
+        let _ = netlist.add_net("n2".to_string());
+        netlist.add_edge("n1", "m1").unwrap();
+        netlist.add_edge("n1", "m2").unwrap();
+        netlist.add_edge("n2", "m2").unwrap();
+        netlist.add_edge("n2", "m3").unwrap();
+
+        let stats = NetlistStats::analyze(&netlist);
+        assert_eq!(stats.min_module_degree, 1);
+        assert_eq!(stats.min_net_degree, 2);
+    }
 }
