@@ -1,6 +1,7 @@
 use indexmap::IndexMap;
 use indexmap::IndexSet;
 use petgraph::graph::NodeIndex;
+use std::collections::HashMap;
 use std::collections::HashSet;
 
 /// Error type for netlist operations
@@ -50,6 +51,8 @@ pub struct Netlist {
     pub module_weight: Option<IndexMap<String, i32>>,
     /// Set of fixed modules that cannot be moved
     pub module_fixed: HashSet<String>,
+    /// Flag indicating whether the netlist has any fixed modules
+    pub has_fixed_modules: bool,
     /// Cached maximum module degree
     pub max_degree: u32,
     /// Cached maximum net degree
@@ -80,6 +83,7 @@ impl Netlist {
             net_weight: None,
             module_weight: None,
             module_fixed: HashSet::new(),
+            has_fixed_modules: false,
             max_degree: 0,
             max_net_degree: 0,
         }
@@ -190,6 +194,11 @@ impl Netlist {
         Ok(())
     }
 
+    /// Returns the total number of nodes (modules + nets) in the graph.
+    pub fn number_of_nodes(&self) -> usize {
+        self.grph.node_count()
+    }
+
     /// Gets the degree (number of connected nets) of a module.
     ///
     /// # Examples
@@ -270,6 +279,36 @@ impl Netlist {
             }
         }
         nets
+    }
+
+    /// Returns the maximum degree among all modules.
+    pub fn get_max_degree(&self) -> u32 {
+        self.max_degree
+    }
+
+    /// Returns the maximum degree among all nets.
+    pub fn get_max_net_degree(&self) -> u32 {
+        self.max_net_degree
+    }
+
+    /// Returns the weight of a module, defaulting to 1 if no weights are set.
+    pub fn get_module_weight(&self, module: &str) -> i32 {
+        self.module_weight
+            .as_ref()
+            .and_then(|w| w.get(module).copied())
+            .unwrap_or(1)
+    }
+
+    /// Sets the weight of a module, initializing the weight map if needed.
+    pub fn set_module_weight(&mut self, module: &str, weight: i32) {
+        self.module_weight
+            .get_or_insert_with(IndexMap::new)
+            .insert(module.to_string(), weight);
+    }
+
+    /// Returns the weight of a net (currently always returns 1).
+    pub fn get_net_weight(&self, _net: &str) -> i32 {
+        1
     }
 
     /// Invalidates cached values (e.g., after adding edges)
@@ -368,6 +407,18 @@ impl Default for NetlistBuilder {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Snapshot of netlist state for backtracking/undo operations.
+///
+/// Stores the external nets and module states at a particular point in time,
+/// enabling rollback functionality for partitioning algorithms.
+#[derive(Debug, Clone)]
+pub struct Snapshot {
+    /// Set of external (cut) nets
+    pub extern_nets: HashSet<String>,
+    /// Dictionary mapping module indices to their partition assignments
+    pub extern_modules: HashMap<String, u8>,
 }
 
 #[cfg(test)]
