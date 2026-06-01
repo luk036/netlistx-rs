@@ -1,8 +1,8 @@
-/// Factory functions for creating test `Netlist` instances.
-///
-/// Ported from Python `netlist.py` factory functions:
-/// - `create_inverter`, `create_inverter2`, `create_drawf`, `create_test_netlist`
-/// - `create_random_hgraph` with van der Corput sequences
+//! Factory functions for creating test `Netlist` instances.
+//!
+//! Ported from Python `netlist.py` factory functions:
+//! - `create_inverter`, `create_inverter2`, `create_drawf`, `create_test_netlist`
+//! - `create_random_hgraph` with van der Corput sequences
 
 use crate::netlist::{Netlist, NetlistBuilder};
 
@@ -194,8 +194,7 @@ pub fn create_random_hgraph(N: u32, M: u32, eta: f64, seed: u64) -> Netlist {
         }
     }
 
-    let netlist = builder.build().expect("Failed to build random hypergraph");
-    netlist
+    builder.build().expect("Failed to build random hypergraph")
 }
 
 #[cfg(test)]

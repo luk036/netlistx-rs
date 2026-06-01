@@ -1,10 +1,10 @@
-/// Graph Cover Algorithms (ported from Python `cover.py`)
-///
-/// Implements primal-dual approximation algorithms with reverse-delete post-processing
-/// for various covering problems in graphs:
-/// - `min_vertex_cover`: minimum weighted vertex cover
-/// - `min_cycle_cover`: minimum weighted set of vertices covering all cycles
-/// - `min_odd_cycle_cover`: minimum weighted set of vertices covering all odd cycles
+//! Graph Cover Algorithms (ported from Python `cover.py`)
+//!
+//! Implements primal-dual approximation algorithms with reverse-delete post-processing
+//! for various covering problems in graphs:
+//! - `min_vertex_cover`: minimum weighted vertex cover
+//! - `min_cycle_cover`: minimum weighted set of vertices covering all cycles
+//! - `min_odd_cycle_cover`: minimum weighted set of vertices covering all odd cycles
 
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -431,7 +431,7 @@ mod tests {
                     if !remaining.contains(neighbor) {
                         continue;
                     }
-                    if parent_opt.as_ref().map_or(false, |p| p == neighbor) {
+                    if parent_opt.as_ref() == Some(neighbor) {
                         continue;
                     }
                     stack.push((neighbor.clone(), Some(current.clone())));

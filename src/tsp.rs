@@ -158,7 +158,7 @@ fn min_weight_perfect_matching_edge(
         if i >= k {
             continue;
         }
-        for j in (i + 1)..k {
+        for (j, _) in dist.iter().enumerate().take(k).skip(i + 1) {
             if (mask & (1 << j)) == 0 {
                 let new_mask = mask | (1 << i) | (1 << j);
                 let new_cost = dp[mask] + dist[i][j];

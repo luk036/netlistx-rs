@@ -401,7 +401,7 @@ fn min_weight_perfect_matching(dist: &[Vec<f64>], n: usize) -> Vec<(usize, usize
             continue;
         }
         // Try pairing i with every unset j > i
-        for j in (i + 1)..n {
+        for (j, _) in dist.iter().enumerate().take(n).skip(i + 1) {
             if (mask & (1 << j)) == 0 {
                 let new_mask = mask | (1 << i) | (1 << j);
                 let new_cost = dp[mask] + dist[i][j];
@@ -501,10 +501,7 @@ pub fn validate_max_cut(
 
     for node_idx in grph.node_indices() {
         let name = grph[node_idx].clone();
-        if !node_map.contains_key(&name) {
-            let idx = cut_grph.add_node(name.clone());
-            node_map.insert(name, idx);
-        }
+        node_map.entry(name.clone()).or_insert_with(|| cut_grph.add_node(name));
     }
 
     for edge_idx in grph.edge_indices() {
@@ -634,7 +631,7 @@ mod tests {
         let matching = min_weight_perfect_matching(&dist, 4);
         assert_eq!(matching.len(), 2);
         // Check it found SOME matching
-        let mut used = vec![false; 4];
+        let mut used = [false; 4];
         for &(i, j) in &matching {
             assert!(!used[i]);
             assert!(!used[j]);

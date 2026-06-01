@@ -377,7 +377,7 @@ fn test_cover_min_odd_cycle_cover_mixed() {
     assert!(sol.iter().any(|v| in_triangle.contains(v)));
     // Square nodes should NOT be in the odd cycle cover
     for v in &["n0", "n1", "n2", "n3"] {
-        assert!(!sol.contains(&v.to_string()), "Square node {} should not be in odd cycle cover", v);
+        assert!(!sol.contains(*v), "Square node {} should not be in odd cycle cover", v);
     }
 }
 
@@ -504,7 +504,7 @@ fn test_rand_cover_line() {
     let weight = unit_weight(&grph);
     let coverset = HashSet::new();
     let (sol, _cost) = rand_vertex_cover(&grph, &weight, 1, &coverset);
-    assert!(sol.len() >= 1);
+    assert!(!sol.is_empty());
     assert!(sol.len() <= 2);
     for edge in grph.raw_edges() {
         let u = &grph[edge.source()];
@@ -858,9 +858,8 @@ fn compute_mst_weight(grph: &petgraph::Graph<String, f64, petgraph::Undirected>)
     let mst = min_spanning_tree(&grph);
     let mut total = 0.0;
     for edge in mst {
-        match edge {
-            petgraph::data::Element::Edge { weight, .. } => total += weight,
-            _ => {}
+        if let petgraph::data::Element::Edge { weight, .. } = edge {
+            total += weight;
         }
     }
     total

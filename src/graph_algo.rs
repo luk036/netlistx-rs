@@ -1,8 +1,8 @@
-/// Graph Algorithms (ported from Python `graph_algo.py`)
-///
-/// This module provides primal-dual approximation algorithms for graphs.
-/// - `min_vertex_cover_fast`: minimum weighted vertex cover (without post-processing)
-/// - `min_maximal_independent_set`: minimum weighted maximal independent set
+//! Graph Algorithms (ported from Python `graph_algo.py`)
+//!
+//! This module provides primal-dual approximation algorithms for graphs.
+//! - `min_vertex_cover_fast`: minimum weighted vertex cover (without post-processing)
+//! - `min_maximal_independent_set`: minimum weighted maximal independent set
 
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -12,7 +12,7 @@ use std::ops::Sub;
 /// Minimum weighted vertex cover using primal-dual approximation (no post-processing).
 ///
 /// For each uncovered edge, swaps so that vtx has the smaller gap, then adds vtx
-/// to the cover. Updates gap[utx] -= gap[vtx] and sets gap[vtx] = 0.
+/// to the cover. Updates `gap[utx] -= gap[vtx]` and sets `gap[vtx] = 0`.
 ///
 /// Ported from Python `min_vertex_cover_fast()` in `graph_algo.py`.
 pub fn min_vertex_cover_fast<W>(
@@ -174,14 +174,6 @@ mod tests {
             grph.add_edge(indices[&key_u], indices[&key_v], ());
         }
         grph
-    }
-
-    fn make_weight(grph: &petgraph::Graph<String, (), petgraph::Undirected>, w: u32) -> HashMap<String, u32> {
-        let mut weight = HashMap::new();
-        for node_idx in grph.node_indices() {
-            weight.insert(grph[node_idx].clone(), w);
-        }
-        weight
     }
 
     #[test]

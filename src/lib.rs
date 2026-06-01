@@ -8,6 +8,7 @@ pub mod netlist;
 pub mod netlist_algo;
 pub mod partitioning;
 pub mod rand_cover;
+pub mod rand_cover_gpu;
 pub mod statistics;
 pub mod trigonom;
 pub mod tsp;
@@ -29,5 +30,6 @@ pub use partitioning::{
     FiducciaMattheyses, KernighanLin, Partition, PartitionError, PartitionResult,
 };
 pub use rand_cover::rand_hyper_vertex_cover;
+pub use rand_cover_gpu::rand_vertex_cover_gpu;
 pub use statistics::NetlistStats;
 pub use tsp::{solve_christofides_2opt_tsp, total_distance};
