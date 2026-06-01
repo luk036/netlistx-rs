@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::collections::HashSet;
 use std::fs::File;
 use std::io::{BufRead, BufReader, Write};
@@ -372,9 +371,13 @@ fn read_dimacs_format<P: AsRef<Path>>(path: P) -> IoResult<Netlist> {
     Ok(netlist)
 }
 
-/// Read a netlist from a JSON file (Yosys JSON format).
+/// Read a netlist from a Yosys JSON file.
 ///
-/// Ported from C++ `read_yosys_json()` in `readwrite.cpp`.
+/// Yosys JSON format contains modules with cells (gates) and ports (I/O).
+/// Cells become modules, ports become fixed modules with weight 0.
+/// Nets are identified by integer wire IDs from the Yosys representation.
+///
+/// Ported from Python `read_yosys_json()` in `netlist.py`.
 pub fn read_yosys_json<P: AsRef<Path>>(path: P) -> IoResult<Netlist> {
     let file = File::open(path.as_ref())?;
     let reader = BufReader::new(file);
@@ -399,13 +402,19 @@ pub fn read_yosys_json<P: AsRef<Path>>(path: P) -> IoResult<Netlist> {
         .get("ports")
         .ok_or_else(|| IoError::InvalidFormat("Missing 'ports'".to_string()))?;
 
+    // 1. Collect all cells and ports
     let cell_names: Vec<String> = cells
         .as_object()
         .map(|m| m.keys().cloned().collect())
         .unwrap_or_default();
-    let num_cells = cell_names.len();
-    let num_ports = ports.as_object().map(|m| m.len()).unwrap_or(0);
+    let port_names: Vec<String> = ports
+        .as_object()
+        .map(|m| m.keys().cloned().collect())
+        .unwrap_or_default();
+    let _num_cells = cell_names.len();
+    let num_ports = port_names.len();
 
+    // 2. Collect all unique net IDs (must be integers, skip strings like "0" constants)
     let mut all_nets_set: HashSet<u32> = HashSet::new();
 
     if let Some(ports_obj) = ports.as_object() {
@@ -440,6 +449,7 @@ pub fn read_yosys_json<P: AsRef<Path>>(path: P) -> IoResult<Netlist> {
                 for conn in connections.values() {
                     if let Some(arr) = conn.as_array() {
                         for net_id in arr {
+                            // Only add integer net IDs (skip string constants)
                             if let Some(n) = net_id.as_u64() {
                                 all_nets_set.insert(n as u32);
                             }
@@ -452,45 +462,46 @@ pub fn read_yosys_json<P: AsRef<Path>>(path: P) -> IoResult<Netlist> {
 
     let mut nets_list: Vec<u32> = all_nets_set.into_iter().collect();
     nets_list.sort();
-    let num_nets = nets_list.len();
-    let net_start = num_cells + num_ports;
 
-    let net_to_node: HashMap<u32, usize> = nets_list
-        .iter()
-        .enumerate()
-        .map(|(i, &n)| (n, net_start + i))
-        .collect();
-
-    let total_nodes = net_start + num_nets;
-
+    // 3. Build the netlist
     let mut netlist = Netlist::new();
 
+    // Add cells as modules (use original cell names)
     for cell_name in &cell_names {
-        let _ = netlist.add_module(format!("cell_{}", cell_name));
-    }
-    if let Some(ports_obj) = ports.as_object() {
-        for (port_idx, port_name) in ports_obj.keys().enumerate() {
-            let _ = netlist.add_module(format!("port_{}", port_name));
-            if port_idx + num_cells >= total_nodes {
-                break;
-            }
-        }
-    }
-    for net_id in &nets_list {
-        let _ = netlist.add_net(format!("wire_{}", net_id));
+        netlist
+            .add_module(cell_name.clone())
+            .map_err(|e| IoError::InvalidFormat(e.to_string()))?;
     }
 
+    // Add ports as modules with "PORT_" prefix
+    for port_name in &port_names {
+        let port_mod = format!("PORT_{}", port_name);
+        netlist
+            .add_module(port_mod)
+            .map_err(|e| IoError::InvalidFormat(e.to_string()))?;
+    }
+
+    // Add nets (wire IDs as string names)
+    for net_id in &nets_list {
+        let net_name = net_id.to_string();
+        netlist
+            .add_net(net_name)
+            .map_err(|e| IoError::InvalidFormat(e.to_string()))?;
+    }
+
+    // 4. Add edges: cell connections
+    //    In the Python version: cells use original names, edges connect cell <-> net
     if let Some(cells_obj) = cells.as_object() {
-        for (cell_idx, cell_data) in cells_obj.values().enumerate() {
+        for (cell_name, cell_data) in cells_obj.iter() {
             if let Some(connections) = cell_data.get("connections").and_then(|c| c.as_object()) {
                 for conn in connections.values() {
                     if let Some(arr) = conn.as_array() {
                         for net_id in arr {
                             if let Some(n) = net_id.as_u64() {
-                                if net_to_node.contains_key(&(n as u32)) {
-                                    let net_name = format!("wire_{}", n);
-                                    let cell_name = format!("cell_{}", cell_names[cell_idx]);
-                                    let _ = netlist.add_edge(&net_name, &cell_name);
+                                let n = n as u32;
+                                if nets_list.contains(&n) {
+                                    let net_name = n.to_string();
+                                    let _ = netlist.add_edge(&net_name, cell_name);
                                 }
                             }
                         }
@@ -500,19 +511,18 @@ pub fn read_yosys_json<P: AsRef<Path>>(path: P) -> IoResult<Netlist> {
         }
     }
 
+    // 5. Add edges: port connections
+    //    Each port connects to its bits.
     if let Some(ports_obj) = ports.as_object() {
-        for (port_idx, port_info) in ports_obj.values().enumerate() {
+        for (port_name, port_info) in ports_obj.iter() {
             if let Some(bits) = port_info.get("bits").and_then(|b| b.as_array()) {
                 for bit in bits {
                     if let Some(n) = bit.as_u64() {
-                        if net_to_node.contains_key(&(n as u32)) {
-                            let net_name = format!("wire_{}", n);
-                            let default_p = format!("p{}", port_idx);
-                            let port_mod_name = format!(
-                                "port_{}",
-                                ports_obj.keys().nth(port_idx).unwrap_or(&default_p)
-                            );
-                            let _ = netlist.add_edge(&net_name, &port_mod_name);
+                        let n = n as u32;
+                        if nets_list.contains(&n) {
+                            let net_name = n.to_string();
+                            let port_mod = format!("PORT_{}", port_name);
+                            let _ = netlist.add_edge(&net_name, &port_mod);
                         }
                     }
                 }
@@ -520,42 +530,136 @@ pub fn read_yosys_json<P: AsRef<Path>>(path: P) -> IoResult<Netlist> {
         }
     }
 
+    // 6. Set metadata
     netlist.num_pads = num_ports as i32;
-    netlist.module_fixed = (num_cells..num_cells + num_ports)
-        .map(|i| {
-            let port_idx = i - num_cells;
-            let default_port = format!("port_{}", port_idx);
-            let port_name = ports
-                .as_object()
-                .and_then(|m| m.keys().nth(port_idx))
-                .unwrap_or(&default_port);
-            format!("port_{}", port_name)
-        })
-        .collect();
+
+    // Set module weights: cells = 1, ports = 0
+    for cell_name in &cell_names {
+        netlist.set_module_weight(cell_name, 1);
+    }
+    for port_name in &port_names {
+        let port_mod = format!("PORT_{}", port_name);
+        netlist.set_module_weight(&port_mod, 0);
+    }
+
+    // Mark ports as fixed
+    for port_name in &port_names {
+        netlist
+            .module_fixed
+            .insert(format!("PORT_{}", port_name));
+    }
     netlist.has_fixed_modules = num_ports > 0;
 
-    for cell_name in &cell_names {
-        let cell_name = format!("cell_{}", cell_name);
-        netlist.set_module_weight(&cell_name, 1);
+    Ok(netlist)
+}
+
+/// Read a netlist from standard node-link JSON format (as written by `write_json`).
+///
+/// The JSON file must have a "graph" object with "num_modules" and "num_nets",
+/// a "nodes" array, and edges in either "links" or "edges" arrays.
+///
+/// Ported from Python `read_json()` in `netlist.py`.
+pub fn read_node_link_json<P: AsRef<Path>>(path: P) -> IoResult<Netlist> {
+    let file = File::open(path.as_ref())?;
+    let reader = BufReader::new(file);
+    let data: serde_json::Value = serde_json::from_reader(reader)?;
+
+    let graph_obj = data
+        .get("graph")
+        .ok_or_else(|| IoError::InvalidFormat("Missing 'graph' key".to_string()))?;
+
+    let num_modules = graph_obj
+        .get("num_modules")
+        .and_then(|v| v.as_u64())
+        .ok_or_else(|| IoError::InvalidFormat("Missing num_modules".to_string()))? as usize;
+    let _num_nets = graph_obj
+        .get("num_nets")
+        .and_then(|v| v.as_u64())
+        .ok_or_else(|| IoError::InvalidFormat("Missing num_nets".to_string()))? as usize;
+    let num_pads = graph_obj
+        .get("num_pads")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as i32;
+
+    let nodes = data
+        .get("nodes")
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| IoError::InvalidFormat("Missing 'nodes' array".to_string()))?;
+
+    // First num_modules entries are modules, rest are nets
+    let mut netlist = Netlist::new();
+    for (i, node) in nodes.iter().enumerate() {
+        let id = node
+            .get("id")
+            .and_then(|v| v.as_str().map(|s| s.to_string()).or_else(|| v.as_i64().map(|n| n.to_string())))
+            .ok_or_else(|| IoError::InvalidFormat(format!("Node {} missing valid 'id'", i)))?;
+        if i < num_modules {
+            netlist
+                .add_module(id)
+                .map_err(|e| IoError::InvalidFormat(e.to_string()))?;
+        } else {
+            netlist
+                .add_net(id)
+                .map_err(|e| IoError::InvalidFormat(e.to_string()))?;
+        }
     }
-    for i in 0..num_ports {
-        let default_p = format!("p{}", i);
-        let port_name = format!(
-            "port_{}",
-            ports
-                .as_object()
-                .and_then(|m| m.keys().nth(i))
-                .unwrap_or(&default_p)
-        );
-        netlist.set_module_weight(&port_name, 0);
+
+    // Add edges (from "links" or "edges")
+    let edges = data
+        .get("links")
+        .or_else(|| data.get("edges"))
+        .and_then(|v| v.as_array());
+
+    if let Some(edges_array) = edges {
+        for edge in edges_array {
+            let source = edge
+                .get("source")
+                .and_then(|v| v.as_str().map(|s| s.to_string()).or_else(|| v.as_i64().map(|n| n.to_string())))
+                .ok_or_else(|| IoError::InvalidFormat("Edge missing valid 'source'".to_string()))?;
+            let target = edge
+                .get("target")
+                .and_then(|v| v.as_str().map(|s| s.to_string()).or_else(|| v.as_i64().map(|n| n.to_string())))
+                .ok_or_else(|| IoError::InvalidFormat("Edge missing valid 'target'".to_string()))?;
+            // In node-link format, we don't know which direction the edge goes.
+            // Try both (net, module) and (module, net) orders.
+            if netlist.add_edge(&source, &target).is_err() {
+                let _ = netlist.add_edge(&target, &source);
+            }
+        }
+    }
+
+    netlist.num_pads = num_pads;
+
+    // Set module weights from node attributes
+    for (i, node) in nodes.iter().enumerate() {
+        if i < num_modules {
+            if let Some(id) = node.get("id").and_then(|v| v.as_str().map(|s| s.to_string()).or_else(|| v.as_i64().map(|n| n.to_string()))) {
+                if let Some(w) = node.get("weight").and_then(|v| v.as_i64()) {
+                    netlist.set_module_weight(&id, w as i32);
+                }
+            }
+        }
     }
 
     Ok(netlist)
 }
 
-/// Read JSON format (stub, delegates to read_yosys_json).
+/// Read JSON format: tries Yosys JSON first, falls back to node-link JSON.
 fn read_json_format<P: AsRef<Path>>(path: P) -> IoResult<Netlist> {
-    read_yosys_json(path)
+    // Read the file content first
+    let content = std::fs::read_to_string(path.as_ref())?;
+    let data: serde_json::Value = serde_json::from_str(&content)?;
+
+    // Detect format: has "modules" key → Yosys, otherwise → node-link
+    if data.get("modules").is_some() {
+        // Re-parse as Yosys format
+        drop(data);
+        read_yosys_json(path)
+    } else {
+        // Node-link format
+        drop(data);
+        read_node_link_json(path)
+    }
 }
 
 /// Write a netlist to JSON format.
@@ -738,6 +842,198 @@ mod tests {
         std::fs::rename(temp_file.path(), &temp_path).unwrap();
 
         let result = read_netlist(&temp_path);
+        assert!(result.is_err());
+    }
+
+    // --- Yosys JSON tests ---
+
+    fn make_yosys_json(
+        cells: serde_json::Value,
+        ports: serde_json::Value,
+        netnames: Option<serde_json::Value>,
+    ) -> tempfile::NamedTempFile {
+        let mut data = serde_json::json!({
+            "modules": {
+                "top": {
+                    "cells": cells,
+                    "ports": ports,
+                }
+            }
+        });
+        if let Some(nn) = netnames {
+            data["modules"]["top"]["netnames"] = nn;
+        }
+        let mut tmp = tempfile::NamedTempFile::new().unwrap();
+        let content = serde_json::to_string(&data).unwrap();
+        use std::io::Write;
+        write!(tmp, "{}", content).unwrap();
+        tmp
+    }
+
+    #[test]
+    fn test_yosys_simple_and_gate() {
+        let cells = serde_json::json!({
+            "and1": {
+                "type": "$and",
+                "connections": {
+                    "A": [0],
+                    "B": [1],
+                    "Y": [2],
+                },
+            }
+        });
+        let ports = serde_json::json!({
+            "a": {"direction": "input", "bits": [0]},
+            "b": {"direction": "input", "bits": [1]},
+            "y": {"direction": "output", "bits": [2]},
+        });
+        let netnames = serde_json::json!({
+            "net_a": {"bits": [0]},
+            "net_b": {"bits": [1]},
+            "net_y": {"bits": [2]},
+        });
+
+        let tmp = make_yosys_json(cells, ports, Some(netnames));
+        let netlist = read_yosys_json(tmp.path()).unwrap();
+
+        // 1 cell + 3 ports = 4 modules
+        assert_eq!(netlist.num_modules(), 4);
+        // 3 distinct nets
+        assert_eq!(netlist.num_nets(), 3);
+        // 4 modules + 3 nets = 7 nodes
+        assert_eq!(netlist.number_of_nodes(), 7);
+        // Each cell-net connection + each port-net connection = 3 + 3 = 6 pins
+        assert_eq!(netlist.grph.edge_count(), 6);
+        assert_eq!(netlist.num_pads, 3);
+
+        // Cells have weight 1
+        assert_eq!(netlist.get_module_weight("and1"), 1);
+        // Ports have weight 0
+        assert_eq!(netlist.get_module_weight("PORT_a"), 0);
+        assert_eq!(netlist.get_module_weight("PORT_b"), 0);
+        assert_eq!(netlist.get_module_weight("PORT_y"), 0);
+
+        // Ports are fixed
+        assert!(netlist.module_fixed.contains("PORT_a"));
+        assert!(netlist.module_fixed.contains("PORT_b"));
+        assert!(netlist.module_fixed.contains("PORT_y"));
+        assert!(netlist.has_fixed_modules);
+    }
+
+    #[test]
+    fn test_yosys_two_cells_shared_net() {
+        let cells = serde_json::json!({
+            "inv1": {
+                "type": "$_INV_",
+                "connections": {"A": [0], "Y": [1]},
+            },
+            "inv2": {
+                "type": "$_INV_",
+                "connections": {"A": [1], "Y": [2]},
+            },
+        });
+        let ports = serde_json::json!({
+            "in": {"direction": "input", "bits": [0]},
+            "out": {"direction": "output", "bits": [2]},
+        });
+
+        let tmp = make_yosys_json(cells, ports, None);
+        let netlist = read_yosys_json(tmp.path()).unwrap();
+
+        // 2 cells + 2 ports = 4 modules
+        assert_eq!(netlist.num_modules(), 4);
+        // 3 distinct nets (0, 1, 2)
+        assert_eq!(netlist.num_nets(), 3);
+        assert_eq!(netlist.num_pads, 2);
+        // 4 modules + 3 nets = 7 nodes
+        assert_eq!(netlist.number_of_nodes(), 7);
+    }
+
+    #[test]
+    fn test_yosys_ignores_string_constants() {
+        let cells = serde_json::json!({
+            "and1": {
+                "type": "$and",
+                "connections": {
+                    "A": [0],
+                    "B": [1],
+                    "Y": [2],
+                },
+            },
+            "const1": {
+                "type": "$const",
+                "connections": {
+                    "Y": [0],
+                    "A": ["0", "0", "0", "0"],
+                },
+            },
+        });
+        let ports = serde_json::json!({
+            "a": {"direction": "input", "bits": [0]},
+            "b": {"direction": "input", "bits": [1]},
+            "y": {"direction": "output", "bits": [2]},
+        });
+
+        let tmp = make_yosys_json(cells, ports, None);
+        let netlist = read_yosys_json(tmp.path()).unwrap();
+
+        // 2 cells + 3 ports = 5 modules
+        assert_eq!(netlist.num_modules(), 5);
+        // 3 distinct integer nets (string "0" constants excluded)
+        assert_eq!(netlist.num_nets(), 3);
+    }
+
+    #[test]
+    fn test_yosys_no_netnames() {
+        let cells = serde_json::json!({
+            "buf1": {
+                "type": "$buf",
+                "connections": {
+                    "A": [0],
+                    "Y": [1],
+                },
+            }
+        });
+        let ports = serde_json::json!({
+            "in": {"direction": "input", "bits": [0]},
+            "out": {"direction": "output", "bits": [1]},
+        });
+
+        let tmp = make_yosys_json(cells, ports, None);
+        let netlist = read_yosys_json(tmp.path()).unwrap();
+
+        // 1 cell + 2 ports = 3 modules
+        assert_eq!(netlist.num_modules(), 3);
+        // 2 distinct nets
+        assert_eq!(netlist.num_nets(), 2);
+        assert_eq!(netlist.num_pads, 2);
+    }
+
+    #[test]
+    fn test_yosys_empty_cells() {
+        let cells = serde_json::json!({});
+        let ports = serde_json::json!({
+            "in": {"direction": "input", "bits": [0]},
+            "out": {"direction": "output", "bits": [1]},
+        });
+
+        let tmp = make_yosys_json(cells, ports, None);
+        let netlist = read_yosys_json(tmp.path()).unwrap();
+
+        // 0 cells + 2 ports = 2 modules
+        assert_eq!(netlist.num_modules(), 2);
+        assert_eq!(netlist.num_nets(), 2);
+        assert_eq!(netlist.num_pads, 2);
+        assert!(netlist.has_fixed_modules);
+    }
+
+    #[test]
+    fn test_yosys_invalid_missing_modules() {
+        let content = r#"{"not_modules": {}}"#;
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        use std::io::Write;
+        write!(&tmp, "{}", content).unwrap();
+        let result = read_yosys_json(tmp.path());
         assert!(result.is_err());
     }
 }

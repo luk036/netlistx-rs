@@ -161,8 +161,82 @@ where
     best.unwrap_or_else(|| (HashSet::new(), W::default()))
 }
 
+/// Pitt's randomized algorithm for minimum weighted vertex cover on a regular graph.
+///
+/// For each uncovered edge (u, v), selects u with probability w(v)/(w(u)+w(v))
+/// and v with probability w(u)/(w(u)+w(v)). Then applies reverse-delete
+/// post-processing to remove redundant vertices.
+///
+/// Ported from Python `rand_vertex_cover()` in `rand_cover.py`.
+pub fn rand_vertex_cover_trial<W, R>(
+    grph: &petgraph::Graph<String, (), petgraph::Undirected>,
+    weight: &HashMap<String, W>,
+    coverset: &HashSet<String>,
+    rng: &mut R,
+) -> (HashSet<String>, W)
+where
+    W: Copy + Into<f64> + std::ops::Add<Output = W> + std::cmp::PartialOrd + Default,
+    R: rand::Rng,
+{
+    let mut soln: HashSet<String> = coverset.iter().cloned().collect();
+    let mut added_order: Vec<String> = Vec::new();
+
+    for edge in grph.raw_edges() {
+        let u = &grph[edge.source()];
+        let v = &grph[edge.target()];
+        if soln.contains(u) || soln.contains(v) {
+            continue;
+        }
+        let w_u: f64 = (*weight.get(u).unwrap_or(&W::default())).into();
+        let w_v: f64 = (*weight.get(v).unwrap_or(&W::default())).into();
+        let threshold = w_v / (w_u + w_v);
+        let chosen = if rng.gen::<f64>() < threshold { u } else { v };
+        soln.insert(chosen.clone());
+        added_order.push(chosen.clone());
+    }
+
+    // Reverse-delete post-processing
+    for vtx in added_order.iter().rev() {
+        soln.remove(vtx);
+        let mut valid = true;
+        for edge in grph.raw_edges() {
+            let u = &grph[edge.source()];
+            let v = &grph[edge.target()];
+            if !soln.contains(u) && !soln.contains(v) {
+                valid = false;
+                break;
+            }
+        }
+        if !valid {
+            soln.insert(vtx.clone());
+        }
+    }
+
+    let total_cost: W = soln
+        .iter()
+        .map(|v| weight.get(v).copied().unwrap_or(W::default()))
+        .fold(W::default(), |acc, w| acc + w);
+
+    (soln, total_cost)
+}
+
+/// Convenience wrapper for `rand_vertex_cover_trial` with seedable RNG.
+pub fn rand_vertex_cover<W>(
+    grph: &petgraph::Graph<String, (), petgraph::Undirected>,
+    weight: &HashMap<String, W>,
+    seed: u64,
+    coverset: &HashSet<String>,
+) -> (HashSet<String>, W)
+where
+    W: Copy + Into<f64> + std::ops::Add<Output = W> + std::cmp::PartialOrd + Default,
+{
+    let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
+    rand_vertex_cover_trial(grph, weight, coverset, &mut rng)
+}
+
 #[cfg(test)]
 mod tests {
+    use petgraph::graph::UnGraph;
     use super::*;
 
     fn create_weighted_graph() -> (Netlist, HashMap<String, i32>) {
@@ -259,6 +333,48 @@ mod tests {
         let coverset = HashSet::new();
         let (soln, cost) = rand_hyper_vertex_cover_mt_seq(&netlist, &weight, 128, 7, &coverset);
         assert_eq!(soln.len(), 1);
+        assert!(soln.contains("v1"));
+        assert_eq!(cost, 1);
+    }
+
+    #[test]
+    fn test_rand_vertex_cover_simple() {
+        let mut grph = UnGraph::new_undirected();
+        let n0 = grph.add_node("v0".to_string());
+        let n1 = grph.add_node("v1".to_string());
+        let n2 = grph.add_node("v2".to_string());
+        grph.add_edge(n0, n1, ());
+        grph.add_edge(n1, n2, ());
+        grph.add_edge(n0, n2, ());
+
+        let mut weight = HashMap::new();
+        weight.insert("v0".to_string(), 1i32);
+        weight.insert("v1".to_string(), 1);
+        weight.insert("v2".to_string(), 1);
+
+        let coverset = HashSet::new();
+        let (soln, _cost) = rand_vertex_cover(&grph, &weight, 42, &coverset);
+        // Verify cover
+        for edge in grph.raw_edges() {
+            let u = &grph[edge.source()];
+            let v = &grph[edge.target()];
+            assert!(soln.contains(u) || soln.contains(v));
+        }
+    }
+
+    #[test]
+    fn test_rand_vertex_cover_weighted() {
+        let mut grph = UnGraph::new_undirected();
+        let n0 = grph.add_node("v0".to_string());
+        let n1 = grph.add_node("v1".to_string());
+        grph.add_edge(n0, n1, ());
+
+        let mut weight = HashMap::new();
+        weight.insert("v0".to_string(), 100i32);
+        weight.insert("v1".to_string(), 1);
+
+        let coverset = HashSet::new();
+        let (soln, cost) = rand_vertex_cover(&grph, &weight, 42, &coverset);
         assert!(soln.contains("v1"));
         assert_eq!(cost, 1);
     }

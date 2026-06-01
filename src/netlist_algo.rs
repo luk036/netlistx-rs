@@ -13,7 +13,7 @@ pub fn min_vertex_cover<W>(
     netlist: &Netlist,
     weight: &HashMap<String, W>,
     coverset: &mut HashSet<String>,
-) -> W
+) -> (HashSet<String>, W)
 where
     W: Copy
         + std::ops::Add<Output = W>
@@ -54,7 +54,7 @@ where
         }
     }
 
-    total_primal_cost
+    (coverset.clone(), total_primal_cost)
 }
 
 /// Minimum weighted maximal matching for netlist hypergraphs.
@@ -68,7 +68,7 @@ pub fn min_maximal_matching<W>(
     weight: &HashMap<String, W>,
     matchset: &mut HashSet<String>,
     dep: &mut HashSet<String>,
-) -> W
+) -> (HashSet<String>, W)
 where
     W: Copy
         + std::ops::Add<Output = W>
@@ -124,7 +124,7 @@ where
         }
     }
 
-    total_primal_cost
+    (matchset.clone(), total_primal_cost)
 }
 
 /// Convenience version that creates empty matchset and dep sets.
@@ -141,8 +141,7 @@ where
 {
     let mut matchset = HashSet::new();
     let mut dep = HashSet::new();
-    let cost = min_maximal_matching(netlist, weight, &mut matchset, &mut dep);
-    (matchset, cost)
+    min_maximal_matching(netlist, weight, &mut matchset, &mut dep)
 }
 
 fn cover_dep(netlist: &Netlist, net: &str, dep: &mut HashSet<String>) {

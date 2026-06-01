@@ -188,8 +188,11 @@ impl Netlist {
             .get(module)
             .ok_or_else(|| NetlistError::ModuleNotFound(module.to_string()))?;
 
-        self.grph.add_edge(*net_index, *module_index, ());
-        self.invalidate_cache();
+        // Avoid duplicate edges (same behavior as networkx.Graph.add_edge)
+        if self.grph.find_edge(*net_index, *module_index).is_none() {
+            self.grph.add_edge(*net_index, *module_index, ());
+            self.invalidate_cache();
+        }
 
         Ok(())
     }
