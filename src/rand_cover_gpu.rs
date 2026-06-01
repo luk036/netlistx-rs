@@ -206,8 +206,17 @@ where
 {
     use cudarc::driver::safe::{CudaDevice, LaunchAsync, LaunchConfig};
     use cudarc::nvrtc::safe::compile_ptx;
+    use std::panic::catch_unwind;
 
-    let dev = CudaDevice::new(0).map_err(|e| format!("CUDA device error: {:?}", e))?;
+    let dev = match catch_unwind(|| CudaDevice::new(0)) {
+        Ok(Ok(dev)) => dev,
+        Ok(Err(e)) => return Err(format!("CUDA device error: {:?}", e)),
+        Err(_) => {
+            return Err(
+                "CUDA driver not available (cudarc panicked loading shared library)".to_string(),
+            )
+        }
+    };
 
     let ptx =
         compile_ptx(PITT_KERNEL_CUDA).map_err(|e| format!("PTX compilation error: {:?}", e))?;
