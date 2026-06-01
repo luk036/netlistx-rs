@@ -122,7 +122,13 @@ where
     // Build weight array
     let weights_flat: Vec<f32> = vertices
         .iter()
-        .map(|v| weight.get(v).copied().map(|w| w.into() as f32).unwrap_or(1.0))
+        .map(|v| {
+            weight
+                .get(v)
+                .copied()
+                .map(|w| w.into() as f32)
+                .unwrap_or(1.0)
+        })
         .collect();
 
     // Generate seeds for each trial
@@ -135,33 +141,61 @@ where
     #[cfg(feature = "cuda")]
     {
         match try_gpu_execution(
-            &edges_flat, grph.edge_count(), &weights_flat, n_vertices,
-            &seeds, num_trials, num_words, coverset, &vertex_to_idx, &vertices, weight,
+            &edges_flat,
+            grph.edge_count(),
+            &weights_flat,
+            n_vertices,
+            &seeds,
+            num_trials,
+            num_words,
+            coverset,
+            &vertex_to_idx,
+            &vertices,
+            weight,
         ) {
             Ok(result) => {
                 #[cfg(debug_assertions)]
-                eprintln!("[rand_cover_gpu] ✅ GPU execution succeeded ({} trials)", num_trials);
+                eprintln!(
+                    "[rand_cover_gpu] ✅ GPU execution succeeded ({} trials)",
+                    num_trials
+                );
                 return result;
             }
             Err(e) => {
-                eprintln!("[rand_cover_gpu] ⚠️ CUDA failed: {} — falling back to CPU", e);
+                eprintln!(
+                    "[rand_cover_gpu] ⚠️ CUDA failed: {} — falling back to CPU",
+                    e
+                );
             }
         }
     }
 
     // Fallback: CPU multi-threaded or sequential
     cpu_multi_trial(
-        &edges_flat, grph.edge_count(), &weights_flat, n_vertices,
-        &seeds, num_trials, num_words, coverset, &vertex_to_idx, &vertices, weight,
+        &edges_flat,
+        grph.edge_count(),
+        &weights_flat,
+        n_vertices,
+        &seeds,
+        num_trials,
+        num_words,
+        coverset,
+        &vertex_to_idx,
+        &vertices,
+        weight,
     )
 }
 
 /// Try to execute trials on GPU.
 #[cfg(feature = "cuda")]
 fn try_gpu_execution<W>(
-    edges_flat: &[i32], num_edges: usize,
-    weights_flat: &[f32], n_vertices: usize,
-    seeds: &[u64], num_trials: usize, num_words: usize,
+    edges_flat: &[i32],
+    num_edges: usize,
+    weights_flat: &[f32],
+    n_vertices: usize,
+    seeds: &[u64],
+    num_trials: usize,
+    num_words: usize,
     coverset: &HashSet<String>,
     vertex_to_idx: &HashMap<&str, usize>,
     vertices: &[String],
@@ -175,19 +209,23 @@ where
 
     let dev = CudaDevice::new(0).map_err(|e| format!("CUDA device error: {:?}", e))?;
 
-    let ptx = compile_ptx(PITT_KERNEL_CUDA)
-        .map_err(|e| format!("PTX compilation error: {:?}", e))?;
+    let ptx =
+        compile_ptx(PITT_KERNEL_CUDA).map_err(|e| format!("PTX compilation error: {:?}", e))?;
 
     dev.load_ptx(ptx, "pitt_module", &["pitt_kernel"])
         .map_err(|e| format!("Module load error: {:?}", e))?;
-    let func = dev.get_func("pitt_module", "pitt_kernel")
+    let func = dev
+        .get_func("pitt_module", "pitt_kernel")
         .ok_or_else(|| "Function not found after loading".to_string())?;
 
-    let d_edges = dev.htod_copy(edges_flat.to_vec())
+    let d_edges = dev
+        .htod_copy(edges_flat.to_vec())
         .map_err(|e| format!("Edge alloc error: {:?}", e))?;
-    let d_weights = dev.htod_copy(weights_flat.to_vec())
+    let d_weights = dev
+        .htod_copy(weights_flat.to_vec())
         .map_err(|e| format!("Weight alloc error: {:?}", e))?;
-    let d_seeds = dev.htod_copy(seeds.to_vec())
+    let d_seeds = dev
+        .htod_copy(seeds.to_vec())
         .map_err(|e| format!("Seed alloc error: {:?}", e))?;
 
     let cover_bytes = num_trials * num_words;
@@ -201,9 +239,11 @@ where
             }
         }
     }
-    let d_covers = dev.htod_copy(covers_host.clone())
+    let d_covers = dev
+        .htod_copy(covers_host.clone())
         .map_err(|e| format!("Cover alloc error: {:?}", e))?;
-    let mut d_costs = dev.alloc_zeros::<f32>(num_trials)
+    let mut d_costs = dev
+        .alloc_zeros::<f32>(num_trials)
         .map_err(|e| format!("Cost alloc error: {:?}", e))?;
 
     let num_trials_i32 = num_trials as i32;
@@ -214,20 +254,34 @@ where
     unsafe {
         func.launch(
             LaunchConfig::for_num_elems(grid_blocks * THREADS_PER_BLOCK),
-            (&d_edges, n_edges_i32, &d_weights, n_vert_i32,
-             &d_covers, &mut d_costs, &d_seeds, num_trials_i32),
-        ).map_err(|e| format!("Kernel launch error: {:?}", e))?;
+            (
+                &d_edges,
+                n_edges_i32,
+                &d_weights,
+                n_vert_i32,
+                &d_covers,
+                &mut d_costs,
+                &d_seeds,
+                num_trials_i32,
+            ),
+        )
+        .map_err(|e| format!("Kernel launch error: {:?}", e))?;
     }
 
-    dev.synchronize().map_err(|e| format!("Sync error: {:?}", e))?;
+    dev.synchronize()
+        .map_err(|e| format!("Sync error: {:?}", e))?;
 
     // Copy results back
-    let covers_result = dev.dtoh_sync_copy(&d_covers)
+    let covers_result = dev
+        .dtoh_sync_copy(&d_covers)
         .map_err(|e| format!("Cover copy error: {:?}", e))?;
-    let costs_result = dev.dtoh_sync_copy(&d_costs)
+    let costs_result = dev
+        .dtoh_sync_copy(&d_costs)
         .map_err(|e| format!("Cost copy error: {:?}", e))?;
 
-    let best_idx = costs_result.iter().enumerate()
+    let best_idx = costs_result
+        .iter()
+        .enumerate()
         .min_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
         .map(|(i, _)| i)
         .unwrap_or(0);
@@ -240,7 +294,8 @@ where
         }
     }
 
-    let total_cost: W = soln.iter()
+    let total_cost: W = soln
+        .iter()
         .map(|v| weight.get(v).copied().unwrap_or(W::default()))
         .fold(W::default(), |acc, w| acc + w);
 
@@ -250,9 +305,13 @@ where
 /// Run trials on CPU via Rayon (parallel) or sequentially.
 #[allow(clippy::too_many_arguments)]
 fn cpu_multi_trial<W>(
-    edges_flat: &[i32], num_edges: usize,
-    weights_flat: &[f32], n_vertices: usize,
-    seeds: &[u64], num_trials: usize, num_words: usize,
+    edges_flat: &[i32],
+    num_edges: usize,
+    weights_flat: &[f32],
+    n_vertices: usize,
+    seeds: &[u64],
+    num_trials: usize,
+    num_words: usize,
     coverset: &HashSet<String>,
     vertex_to_idx: &HashMap<&str, usize>,
     vertices: &[String],
@@ -280,7 +339,15 @@ where
             .map(|t| {
                 let mut cover = initial_cover.clone();
                 let seed = seeds[t];
-                run_single_trial(&mut cover, edges_flat, num_edges, weights_flat, n_vertices, seed, num_words);
+                run_single_trial(
+                    &mut cover,
+                    edges_flat,
+                    num_edges,
+                    weights_flat,
+                    n_vertices,
+                    seed,
+                    num_words,
+                );
                 let cost = compute_cover_cost(&cover, weights_flat, n_vertices);
                 let soln = extract_cover(&cover, vertices, n_vertices, num_words);
                 (soln, cost)
@@ -294,7 +361,15 @@ where
             .map(|t| {
                 let mut cover = initial_cover.clone();
                 let seed = seeds[t];
-                run_single_trial(&mut cover, edges_flat, num_edges, weights_flat, n_vertices, seed, num_words);
+                run_single_trial(
+                    &mut cover,
+                    edges_flat,
+                    num_edges,
+                    weights_flat,
+                    n_vertices,
+                    seed,
+                    num_words,
+                );
                 let cost = compute_cover_cost(&cover, weights_flat, n_vertices);
                 let soln = extract_cover(&cover, vertices, n_vertices, num_words);
                 (soln, cost)
@@ -319,9 +394,12 @@ where
 /// Run a single Pitt trial on CPU.
 fn run_single_trial(
     cover: &mut [u32],
-    edges_flat: &[i32], num_edges: usize,
-    weights_flat: &[f32], _n_vertices: usize,
-    mut seed: u64, _num_words: usize,
+    edges_flat: &[i32],
+    num_edges: usize,
+    weights_flat: &[f32],
+    _n_vertices: usize,
+    mut seed: u64,
+    _num_words: usize,
 ) {
     for i in 0..num_edges {
         let u = edges_flat[i * 2] as usize;
@@ -427,8 +505,12 @@ mod tests {
         for edge in grph.raw_edges() {
             let u = &grph[edge.source()];
             let v = &grph[edge.target()];
-            assert!(soln.contains(u) || soln.contains(v),
-                "Edge ({},{}) uncovered", u, v);
+            assert!(
+                soln.contains(u) || soln.contains(v),
+                "Edge ({},{}) uncovered",
+                u,
+                v
+            );
         }
         // Triangle optimal cover size = 2
         assert_eq!(soln.len(), 2);
@@ -471,13 +553,10 @@ mod tests {
         let n0 = grph.add_node("heavy".to_string());
         let n1 = grph.add_node("light".to_string());
         grph.add_edge(n0, n1, ());
-        let weight: HashMap<String, i32> = [
-            ("heavy".to_string(), 100),
-            ("light".to_string(), 1),
-        ]
-        .iter()
-        .cloned()
-        .collect();
+        let weight: HashMap<String, i32> = [("heavy".to_string(), 100), ("light".to_string(), 1)]
+            .iter()
+            .cloned()
+            .collect();
         let coverset = HashSet::new();
         let (soln, cost) = rand_vertex_cover_gpu(&grph, &weight, &coverset, 128, 42);
         // Should prefer picking the light vertex

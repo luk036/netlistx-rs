@@ -1,8 +1,8 @@
+use petgraph::graph::NodeIndex;
+use petgraph::Graph;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::collections::VecDeque;
-use petgraph::graph::NodeIndex;
-use petgraph::Graph;
 
 /// Solve MAX-CUT for a planar graph using Hadlock's algorithm.
 ///
@@ -11,9 +11,7 @@ use petgraph::Graph;
 ///
 /// Edge weights are provided via a `weight` map keyed by edge keys "u--v" (sorted).
 /// Returns a set of edge keys (sorted tuples) that form the maximum cut.
-pub fn solve_hadlock_max_cut(
-    grph: &Graph<String, f64, petgraph::Undirected>,
-) -> HashSet<String> {
+pub fn solve_hadlock_max_cut(grph: &Graph<String, f64, petgraph::Undirected>) -> HashSet<String> {
     let components = biconnected_components(grph);
     if components.is_empty() {
         return HashSet::new();
@@ -152,7 +150,15 @@ fn edge_key(u: &str, v: &str) -> String {
 
 /// Pop smallest element from a priority queue (vec-based binary heap substitute).
 fn pop_smallest<T: PartialOrd>(vec: &mut Vec<(T, usize)>) -> Option<(T, usize)> {
-    let idx = vec.iter().enumerate().min_by(|a, b| a.1.0.partial_cmp(&b.1.0).unwrap_or(std::cmp::Ordering::Equal))?.0;
+    let idx = vec
+        .iter()
+        .enumerate()
+        .min_by(|a, b| {
+            a.1 .0
+                .partial_cmp(&b.1 .0)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })?
+        .0;
     Some(vec.swap_remove(idx))
 }
 
@@ -166,10 +172,8 @@ fn find_faces(grph: &Graph<String, f64, petgraph::Undirected>) -> Vec<Vec<String
     let mut adj: HashMap<String, Vec<String>> = HashMap::new();
     for node_idx in grph.node_indices() {
         let node = &grph[node_idx];
-        let mut neighbors: Vec<String> = grph
-            .neighbors(node_idx)
-            .map(|n| grph[n].clone())
-            .collect();
+        let mut neighbors: Vec<String> =
+            grph.neighbors(node_idx).map(|n| grph[n].clone()).collect();
         neighbors.sort();
         adj.insert(node.clone(), neighbors);
     }
@@ -433,7 +437,9 @@ fn min_weight_perfect_matching(dist: &[Vec<f64>], n: usize) -> Vec<(usize, usize
 }
 
 /// Find biconnected components via DFS articulation point detection.
-fn biconnected_components(grph: &Graph<String, f64, petgraph::Undirected>) -> Vec<Graph<String, f64, petgraph::Undirected>> {
+fn biconnected_components(
+    grph: &Graph<String, f64, petgraph::Undirected>,
+) -> Vec<Graph<String, f64, petgraph::Undirected>> {
     let n = grph.node_count();
     if n == 0 {
         return Vec::new();
@@ -501,7 +507,9 @@ pub fn validate_max_cut(
 
     for node_idx in grph.node_indices() {
         let name = grph[node_idx].clone();
-        node_map.entry(name.clone()).or_insert_with(|| cut_grph.add_node(name));
+        node_map
+            .entry(name.clone())
+            .or_insert_with(|| cut_grph.add_node(name));
     }
 
     for edge_idx in grph.edge_indices() {
@@ -529,7 +537,8 @@ pub fn validate_max_cut(
         color.insert(node.clone(), Some(true));
         queue.push_back(node);
         while let Some(current) = queue.pop_front() {
-            let current_idx = cut_grph.node_indices()
+            let current_idx = cut_grph
+                .node_indices()
                 .find(|i| cut_grph[*i] == current)
                 .unwrap();
             for neighbor_idx in cut_grph.neighbors(current_idx) {
@@ -552,10 +561,7 @@ pub fn validate_max_cut(
     }
 
     // Compute total cut weight
-    let cut_weight: f64 = cut_edges
-        .iter()
-        .map(|ek| get_edge_weight(grph, ek))
-        .sum();
+    let cut_weight: f64 = cut_edges.iter().map(|ek| get_edge_weight(grph, ek)).sum();
 
     (is_bipartite, cut_weight)
 }

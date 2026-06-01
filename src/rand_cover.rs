@@ -236,8 +236,8 @@ where
 
 #[cfg(test)]
 mod tests {
-    use petgraph::graph::UnGraph;
     use super::*;
+    use petgraph::graph::UnGraph;
 
     fn create_weighted_graph() -> (Netlist, HashMap<String, i32>) {
         let mut netlist = Netlist::new();

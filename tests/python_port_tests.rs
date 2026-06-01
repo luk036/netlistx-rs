@@ -9,7 +9,9 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 
 use netlistx_rs::graph_algo::{min_maximal_independent_set, min_vertex_cover_fast};
-use netlistx_rs::graph_cover::{min_cycle_cover, min_odd_cycle_cover, min_vertex_cover as graph_min_vc};
+use netlistx_rs::graph_cover::{
+    min_cycle_cover, min_odd_cycle_cover, min_vertex_cover as graph_min_vc,
+};
 use netlistx_rs::hadlock::{solve_hadlock_max_cut, validate_max_cut};
 use netlistx_rs::netlist_algo::{min_maximal_matching, min_maximal_matching_new, min_vertex_cover};
 use netlistx_rs::rand_cover::{rand_hyper_vertex_cover, rand_vertex_cover};
@@ -46,11 +48,19 @@ fn make_petgraph(edges: &[(u32, u32)]) -> petgraph::Graph<String, (), petgraph::
 
 /// Weight map from (name → weight) for a petgraph.
 fn unit_weight(grph: &petgraph::Graph<String, (), petgraph::Undirected>) -> HashMap<String, u32> {
-    grph.node_indices().map(|i| (grph[i].clone(), 1u32)).collect()
+    grph.node_indices()
+        .map(|i| (grph[i].clone(), 1u32))
+        .collect()
 }
 
 /// Create a complete graph for TSP testing.
-fn make_complete_graph(n: usize, seed: u64) -> (petgraph::Graph<String, f64, petgraph::Undirected>, Vec<(f64, f64)>) {
+fn make_complete_graph(
+    n: usize,
+    seed: u64,
+) -> (
+    petgraph::Graph<String, f64, petgraph::Undirected>,
+    Vec<(f64, f64)>,
+) {
     let mut rng = SimpleRng::new(seed);
     let positions: Vec<(f64, f64)> = (0..n)
         .map(|_| (rng.next_f64() * 100.0, rng.next_f64() * 100.0))
@@ -70,7 +80,9 @@ fn make_complete_graph(n: usize, seed: u64) -> (petgraph::Graph<String, f64, pet
 fn is_valid_hamiltonian(path: &[usize], n: usize) -> bool {
     path.len() == n + 1 && path[0] == path[path.len() - 1] && {
         let visited: HashSet<usize> = path[..path.len() - 1].iter().copied().collect();
-        visited.len() == n && *visited.iter().min().unwrap() == 0 && *visited.iter().max().unwrap() == n - 1
+        visited.len() == n
+            && *visited.iter().min().unwrap() == 0
+            && *visited.iter().max().unwrap() == n - 1
     }
 }
 
@@ -79,10 +91,15 @@ struct SimpleRng {
 }
 impl SimpleRng {
     fn new(seed: u64) -> Self {
-        Self { state: if seed == 0 { 1 } else { seed } }
+        Self {
+            state: if seed == 0 { 1 } else { seed },
+        }
     }
     fn next_f64(&mut self) -> f64 {
-        self.state = self.state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        self.state = self
+            .state
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         (self.state >> 11) as f64 / (1u64 << 53) as f64
     }
 }
@@ -183,14 +200,22 @@ fn test_graph_algo_min_vertex_cover_on_drawf() {
         let v = h.grph[edge.target()].clone();
         grph.add_edge(indices[&u], indices[&v], ());
     }
-    let weight: HashMap<String, u32> = grph.node_indices().map(|i| (grph[i].clone(), 1u32)).collect();
+    let weight: HashMap<String, u32> = grph
+        .node_indices()
+        .map(|i| (grph[i].clone(), 1u32))
+        .collect();
     let mut coverset = HashSet::new();
     let (sol, _cost) = graph_min_vc(&grph, &weight, &mut coverset);
     // Verify it's a valid vertex cover
     for edge in grph.raw_edges() {
         let u = &grph[edge.source()];
         let v = &grph[edge.target()];
-        assert!(sol.contains(u) || sol.contains(v), "Edge ({},{}) uncovered", u, v);
+        assert!(
+            sol.contains(u) || sol.contains(v),
+            "Edge ({},{}) uncovered",
+            u,
+            v
+        );
     }
 }
 
@@ -213,7 +238,10 @@ fn test_graph_algo_min_vertex_cover_fast_on_drawf() {
 fn test_graph_algo_min_vertex_cover_fast_weighted() {
     let h = create_drawf();
     let grph = make_petgraph_from_netlist(&h);
-    let weight: HashMap<String, u32> = grph.node_indices().map(|i| (grph[i].clone(), 2u32)).collect();
+    let weight: HashMap<String, u32> = grph
+        .node_indices()
+        .map(|i| (grph[i].clone(), 2u32))
+        .collect();
     let mut coverset = HashSet::new();
     let (_sol, cost) = min_vertex_cover_fast(&grph, &weight, &mut coverset);
     // With all weights=2, total should be 2x the unweighted result
@@ -232,14 +260,23 @@ fn test_graph_algo_min_independent_set_on_drawf() {
     for edge in grph.raw_edges() {
         let u = &grph[edge.source()];
         let v = &grph[edge.target()];
-        assert!(!(sol.contains(u) && sol.contains(v)), "Edge between independent set vertices {}--{}", u, v);
+        assert!(
+            !(sol.contains(u) && sol.contains(v)),
+            "Edge between independent set vertices {}--{}",
+            u,
+            v
+        );
     }
     // Verify maximality
     for node_idx in grph.node_indices() {
         let node = &grph[node_idx];
         if !sol.contains(node) {
             let adjacent_to_sol = grph.neighbors(node_idx).any(|n| sol.contains(&grph[n]));
-            assert!(adjacent_to_sol, "Node {} could be added to independent set", node);
+            assert!(
+                adjacent_to_sol,
+                "Node {} could be added to independent set",
+                node
+            );
         }
     }
 }
@@ -292,8 +329,11 @@ fn test_cover_pd_cover() {
     .collect();
     let mut soln = HashSet::new();
     let (covered, _cost) = pd_cover(violate_fn, &weight, &mut soln);
-    assert!(covered.contains("n0") || covered.contains("n1"),
-        "Expected n0 or n1 in cover, got {:?}", covered);
+    assert!(
+        covered.contains("n0") || covered.contains("n1"),
+        "Expected n0 or n1 in cover, got {:?}",
+        covered
+    );
 }
 
 #[test]
@@ -363,8 +403,13 @@ fn test_cover_min_odd_cycle_cover_square() {
 fn test_cover_min_odd_cycle_cover_mixed() {
     // Square (even) + Triangle (odd)
     let grph = make_petgraph(&[
-        (0, 1), (1, 2), (2, 3), (3, 0), // even square
-        (4, 5), (5, 6), (6, 4), // odd triangle
+        (0, 1),
+        (1, 2),
+        (2, 3),
+        (3, 0), // even square
+        (4, 5),
+        (5, 6),
+        (6, 4), // odd triangle
     ]);
     let weight = unit_weight(&grph);
     let mut coverset = HashSet::new();
@@ -377,7 +422,11 @@ fn test_cover_min_odd_cycle_cover_mixed() {
     assert!(sol.iter().any(|v| in_triangle.contains(v)));
     // Square nodes should NOT be in the odd cycle cover
     for v in &["n0", "n1", "n2", "n3"] {
-        assert!(!sol.contains(*v), "Square node {} should not be in odd cycle cover", v);
+        assert!(
+            !sol.contains(*v),
+            "Square node {} should not be in odd cycle cover",
+            v
+        );
     }
 }
 
@@ -403,7 +452,11 @@ fn test_cover_k5_minimality() {
             let v = &grph[e.target()];
             test_soln.contains(u) || test_soln.contains(v)
         });
-        assert!(!is_still_covered, "Node {} was redundant in vertex cover", v);
+        assert!(
+            !is_still_covered,
+            "Node {} was redundant in vertex cover",
+            v
+        );
     }
 }
 
@@ -442,7 +495,11 @@ fn test_netlist_algo_min_maximal_matching_drawf() {
     for net in &h.nets {
         let modules = h.get_net_modules(net);
         let has_covered = modules.iter().any(|m| covered_by_match.contains(m));
-        assert!(has_covered, "Net {} shares no vertex with any matched net", net);
+        assert!(
+            has_covered,
+            "Net {} shares no vertex with any matched net",
+            net
+        );
     }
 }
 
@@ -466,13 +523,21 @@ fn test_netlist_algo_matching_with_predefined_matchset() {
     let mut matchset: HashSet<String> = [predefined.clone()].iter().cloned().collect();
     let mut dep = HashSet::new();
     let (result, _cost) = min_maximal_matching(&h, &weight, &mut matchset, &mut dep);
-    assert!(result.contains(&predefined), "Predefined net should remain in matchset");
+    assert!(
+        result.contains(&predefined),
+        "Predefined net should remain in matchset"
+    );
 }
 
 #[test]
 fn test_netlist_algo_matching_with_different_weights() {
     let h = create_drawf();
-    let weight: HashMap<String, i32> = h.nets.iter().enumerate().map(|(i, n)| (n.clone(), i as i32 + 1)).collect();
+    let weight: HashMap<String, i32> = h
+        .nets
+        .iter()
+        .enumerate()
+        .map(|(i, n)| (n.clone(), i as i32 + 1))
+        .collect();
     let mut matchset = HashSet::new();
     let mut dep = HashSet::new();
     let (_result, cost) = min_maximal_matching(&h, &weight, &mut matchset, &mut dep);
@@ -601,7 +666,11 @@ fn test_rand_hyper_cover_simple() {
     // Verify all nets are covered
     for net in &h.nets {
         let modules = h.get_net_modules(net);
-        assert!(modules.iter().any(|m| sol.contains(m)), "Net {} uncovered", net);
+        assert!(
+            modules.iter().any(|m| sol.contains(m)),
+            "Net {} uncovered",
+            net
+        );
     }
 }
 
@@ -900,7 +969,10 @@ fn test_stress_maximal_independent_set() {
     for edge in grph.raw_edges() {
         let u = &grph[edge.source()];
         let v = &grph[edge.target()];
-        assert!(!(sol.contains(u) && sol.contains(v)), "Edge between independent set vertices");
+        assert!(
+            !(sol.contains(u) && sol.contains(v)),
+            "Edge between independent set vertices"
+        );
     }
 }
 
@@ -990,32 +1062,52 @@ fn test_json_degree_counts() {
 // Yosys testcase integration tests
 // ============================================================================
 
-fn check_yosys_file(path: &str, exp_modules: usize, exp_nets: usize, exp_pins: usize, exp_pads: i32, exp_nodes: usize) {
+fn check_yosys_file(
+    path: &str,
+    exp_modules: usize,
+    exp_nets: usize,
+    exp_pins: usize,
+    exp_pads: i32,
+    exp_nodes: usize,
+) {
     let netlist = netlistx_rs::io::read_yosys_json(path).unwrap();
-    assert_eq!(netlist.num_modules(), exp_modules,
-        "{}: modules mismatch", path);
-    assert_eq!(netlist.num_nets(), exp_nets,
-        "{}: nets mismatch", path);
-    assert_eq!(netlist.grph.edge_count(), exp_pins,
-        "{}: pins mismatch", path);
-    assert_eq!(netlist.num_pads, exp_pads,
-        "{}: pads mismatch", path);
-    assert_eq!(netlist.number_of_nodes(), exp_nodes,
-        "{}: nodes mismatch", path);
+    assert_eq!(
+        netlist.num_modules(),
+        exp_modules,
+        "{}: modules mismatch",
+        path
+    );
+    assert_eq!(netlist.num_nets(), exp_nets, "{}: nets mismatch", path);
+    assert_eq!(
+        netlist.grph.edge_count(),
+        exp_pins,
+        "{}: pins mismatch",
+        path
+    );
+    assert_eq!(netlist.num_pads, exp_pads, "{}: pads mismatch", path);
+    assert_eq!(
+        netlist.number_of_nodes(),
+        exp_nodes,
+        "{}: nodes mismatch",
+        path
+    );
     // Verify module weights: cells should be 1, ports should be 0
-    assert!(netlist.get_max_degree() > 0,
-        "{}: max degree should be > 0", path);
+    assert!(
+        netlist.get_max_degree() > 0,
+        "{}: max degree should be > 0",
+        path
+    );
 }
 
 #[test]
 fn test_yosys_sphere_netlist() {
     check_yosys_file(
         "yosys_testcases/sphere_netlist.json",
-        65,  // modules: 56 cells + 9 ports
-        623, // nets
+        65,   // modules: 56 cells + 9 ports
+        623,  // nets
         1555, // pins
-        9,   // pads
-        688, // nodes: 65 + 623
+        9,    // pads
+        688,  // nodes: 65 + 623
     );
 }
 
@@ -1023,10 +1115,10 @@ fn test_yosys_sphere_netlist() {
 fn test_yosys_sphere3hopf_simple() {
     check_yosys_file(
         "yosys_testcases/sphere3hopf_netlist_simple.json",
-        188, // modules: 180 cells + 8 ports
+        188,  // modules: 180 cells + 8 ports
         2825, // nets
         6823, // pins
-        8,   // pads
+        8,    // pads
         3013, // nodes: 188 + 2825
     );
 }
@@ -1035,10 +1127,10 @@ fn test_yosys_sphere3hopf_simple() {
 fn test_yosys_sphere3hopf_full() {
     check_yosys_file(
         "yosys_testcases/sphere3hopf_netlist.json",
-        188, // modules: 180 cells + 8 ports
+        188,  // modules: 180 cells + 8 ports
         2825, // nets
         6823, // pins
-        8,   // pads
+        8,    // pads
         3013, // nodes: 188 + 2825
     );
 }

@@ -36,12 +36,17 @@ struct SimpleRng {
 
 impl SimpleRng {
     fn new(seed: u64) -> Self {
-        Self { state: if seed == 0 { 1 } else { seed } }
+        Self {
+            state: if seed == 0 { 1 } else { seed },
+        }
     }
 
     fn next_f64(&mut self) -> f64 {
         // LCG parameters from Numerical Recipes
-        self.state = self.state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        self.state = self
+            .state
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         // Extract top 53 bits for double precision
         (self.state >> 11) as f64 / (1u64 << 53) as f64
     }
@@ -112,14 +117,25 @@ pub fn create_drawf() -> Netlist {
     }
     // Edges
     builder = builder
-        .add_edge("n0", "p1").add_edge("n0", "a0").add_edge("n0", "a1")
-        .add_edge("n1", "a0").add_edge("n1", "a2").add_edge("n1", "a3")
-        .add_edge("n2", "a1").add_edge("n2", "a2").add_edge("n2", "a3")
-        .add_edge("n3", "a2").add_edge("n3", "p2")
-        .add_edge("n4", "a3").add_edge("n4", "p3")
+        .add_edge("n0", "p1")
+        .add_edge("n0", "a0")
+        .add_edge("n0", "a1")
+        .add_edge("n1", "a0")
+        .add_edge("n1", "a2")
+        .add_edge("n1", "a3")
+        .add_edge("n2", "a1")
+        .add_edge("n2", "a2")
+        .add_edge("n2", "a3")
+        .add_edge("n3", "a2")
+        .add_edge("n3", "p2")
+        .add_edge("n4", "a3")
+        .add_edge("n4", "p3")
         .add_edge("n5", "p2");
 
-    let mut netlist = builder.with_pads(3).build().expect("Failed to build drawf netlist");
+    let mut netlist = builder
+        .with_pads(3)
+        .build()
+        .expect("Failed to build drawf netlist");
 
     netlist.set_module_weight("a0", 1);
     netlist.set_module_weight("a1", 3);

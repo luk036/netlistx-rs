@@ -19,7 +19,9 @@ pub use factory::{
     vdc, vdcorput,
 };
 pub use graph_algo::{min_maximal_independent_set, min_vertex_cover_fast};
-pub use graph_cover::{min_cycle_cover, min_odd_cycle_cover, min_vertex_cover_new as min_vertex_cover};
+pub use graph_cover::{
+    min_cycle_cover, min_odd_cycle_cover, min_vertex_cover_new as min_vertex_cover,
+};
 pub use hadlock::solve_hadlock_max_cut;
 pub use io::{
     read_netlist, read_node_link_json, read_yosys_json, write_netlist, InputFormat, OutputFormat,

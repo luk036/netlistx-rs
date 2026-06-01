@@ -544,9 +544,7 @@ pub fn read_yosys_json<P: AsRef<Path>>(path: P) -> IoResult<Netlist> {
 
     // Mark ports as fixed
     for port_name in &port_names {
-        netlist
-            .module_fixed
-            .insert(format!("PORT_{}", port_name));
+        netlist.module_fixed.insert(format!("PORT_{}", port_name));
     }
     netlist.has_fixed_modules = num_ports > 0;
 
@@ -571,11 +569,13 @@ pub fn read_node_link_json<P: AsRef<Path>>(path: P) -> IoResult<Netlist> {
     let num_modules = graph_obj
         .get("num_modules")
         .and_then(|v| v.as_u64())
-        .ok_or_else(|| IoError::InvalidFormat("Missing num_modules".to_string()))? as usize;
+        .ok_or_else(|| IoError::InvalidFormat("Missing num_modules".to_string()))?
+        as usize;
     let _num_nets = graph_obj
         .get("num_nets")
         .and_then(|v| v.as_u64())
-        .ok_or_else(|| IoError::InvalidFormat("Missing num_nets".to_string()))? as usize;
+        .ok_or_else(|| IoError::InvalidFormat("Missing num_nets".to_string()))?
+        as usize;
     let num_pads = graph_obj
         .get("num_pads")
         .and_then(|v| v.as_u64())
@@ -591,7 +591,11 @@ pub fn read_node_link_json<P: AsRef<Path>>(path: P) -> IoResult<Netlist> {
     for (i, node) in nodes.iter().enumerate() {
         let id = node
             .get("id")
-            .and_then(|v| v.as_str().map(|s| s.to_string()).or_else(|| v.as_i64().map(|n| n.to_string())))
+            .and_then(|v| {
+                v.as_str()
+                    .map(|s| s.to_string())
+                    .or_else(|| v.as_i64().map(|n| n.to_string()))
+            })
             .ok_or_else(|| IoError::InvalidFormat(format!("Node {} missing valid 'id'", i)))?;
         if i < num_modules {
             netlist
@@ -614,11 +618,19 @@ pub fn read_node_link_json<P: AsRef<Path>>(path: P) -> IoResult<Netlist> {
         for edge in edges_array {
             let source = edge
                 .get("source")
-                .and_then(|v| v.as_str().map(|s| s.to_string()).or_else(|| v.as_i64().map(|n| n.to_string())))
+                .and_then(|v| {
+                    v.as_str()
+                        .map(|s| s.to_string())
+                        .or_else(|| v.as_i64().map(|n| n.to_string()))
+                })
                 .ok_or_else(|| IoError::InvalidFormat("Edge missing valid 'source'".to_string()))?;
             let target = edge
                 .get("target")
-                .and_then(|v| v.as_str().map(|s| s.to_string()).or_else(|| v.as_i64().map(|n| n.to_string())))
+                .and_then(|v| {
+                    v.as_str()
+                        .map(|s| s.to_string())
+                        .or_else(|| v.as_i64().map(|n| n.to_string()))
+                })
                 .ok_or_else(|| IoError::InvalidFormat("Edge missing valid 'target'".to_string()))?;
             // In node-link format, we don't know which direction the edge goes.
             // Try both (net, module) and (module, net) orders.
@@ -633,7 +645,11 @@ pub fn read_node_link_json<P: AsRef<Path>>(path: P) -> IoResult<Netlist> {
     // Set module weights from node attributes
     for (i, node) in nodes.iter().enumerate() {
         if i < num_modules {
-            if let Some(id) = node.get("id").and_then(|v| v.as_str().map(|s| s.to_string()).or_else(|| v.as_i64().map(|n| n.to_string()))) {
+            if let Some(id) = node.get("id").and_then(|v| {
+                v.as_str()
+                    .map(|s| s.to_string())
+                    .or_else(|| v.as_i64().map(|n| n.to_string()))
+            }) {
                 if let Some(w) = node.get("weight").and_then(|v| v.as_i64()) {
                     netlist.set_module_weight(&id, w as i32);
                 }

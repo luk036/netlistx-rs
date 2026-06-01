@@ -381,8 +381,12 @@ mod tests {
         for edge in grph.raw_edges() {
             let u = &grph[edge.source()];
             let v = &grph[edge.target()];
-            assert!(sol.contains(u) || sol.contains(v),
-                    "Edge ({},{}) not covered", u, v);
+            assert!(
+                sol.contains(u) || sol.contains(v),
+                "Edge ({},{}) not covered",
+                u,
+                v
+            );
         }
     }
 
@@ -403,7 +407,8 @@ mod tests {
         let mut coverset = HashSet::new();
         let (sol, _cost) = min_cycle_cover(&grph, &weight, &mut coverset);
         // Verify graph is acyclic after removing sol
-        let remaining: HashSet<String> = grph.node_indices()
+        let remaining: HashSet<String> = grph
+            .node_indices()
             .map(|i| grph[i].clone())
             .filter(|n| !sol.contains(n))
             .collect();
@@ -424,8 +429,7 @@ mod tests {
                 }
                 local_visited.insert(current.clone());
                 visited.insert(current.clone());
-                let current_idx = grph.node_indices()
-                    .find(|i| grph[*i] == current).unwrap();
+                let current_idx = grph.node_indices().find(|i| grph[*i] == current).unwrap();
                 for neighbor_idx in grph.neighbors(current_idx) {
                     let neighbor = &grph[neighbor_idx];
                     if !remaining.contains(neighbor) {
@@ -458,7 +462,8 @@ mod tests {
         let (sol, _cost) = min_odd_cycle_cover(&grph, &weight, &mut coverset);
 
         // Verify remaining graph is bipartite (no odd cycles)
-        let remaining: HashSet<String> = grph.node_indices()
+        let remaining: HashSet<String> = grph
+            .node_indices()
             .map(|i| grph[i].clone())
             .filter(|n| !sol.contains(n))
             .collect();
@@ -474,8 +479,7 @@ mod tests {
             color.insert(node.clone(), Some(true));
             queue.push_back(node.clone());
             while let Some(current) = queue.pop_front() {
-                let current_idx = grph.node_indices()
-                    .find(|i| grph[*i] == current).unwrap();
+                let current_idx = grph.node_indices().find(|i| grph[*i] == current).unwrap();
                 for neighbor_idx in grph.neighbors(current_idx) {
                     let neighbor = &grph[neighbor_idx];
                     if !remaining.contains(neighbor) {

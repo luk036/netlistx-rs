@@ -1,16 +1,14 @@
-use std::collections::HashMap;
-use std::collections::HashSet;
 use petgraph::graph::NodeIndex;
 use petgraph::Graph;
+use std::collections::HashMap;
+use std::collections::HashSet;
 
 /// Solve Metric TSP using Christofides + 2-Opt refinement.
 ///
 /// The graph must be a complete graph with edge weights stored as f64,
 /// satisfying the triangle inequality (Metric TSP).
 /// Returns a Hamiltonian cycle as a Vec of node indices (last == first).
-pub fn solve_christofides_2opt_tsp(
-    grph: &Graph<String, f64, petgraph::Undirected>,
-) -> Vec<usize> {
+pub fn solve_christofides_2opt_tsp(grph: &Graph<String, f64, petgraph::Undirected>) -> Vec<usize> {
     let initial = christofides_tsp(grph);
     two_opt(&initial, grph)
 }
@@ -23,9 +21,7 @@ pub fn solve_christofides_2opt_tsp(
 /// 4. Combine into Eulerian multigraph
 /// 5. Eulerian circuit
 /// 6. Shortcut to Hamiltonian cycle
-pub fn christofides_tsp(
-    grph: &Graph<String, f64, petgraph::Undirected>,
-) -> Vec<usize> {
+pub fn christofides_tsp(grph: &Graph<String, f64, petgraph::Undirected>) -> Vec<usize> {
     let n = grph.node_count();
     if n == 0 {
         return Vec::new();
@@ -107,7 +103,13 @@ fn mst(grph: &Graph<String, f64, petgraph::Undirected>) -> Vec<(usize, usize)> {
             let bi: usize = b.index();
             let w = grph[edge_idx];
 
-            let (v, other) = if ai == u { (bi, ai) } else if bi == u { (ai, bi) } else { continue; };
+            let (v, other) = if ai == u {
+                (bi, ai)
+            } else if bi == u {
+                (ai, bi)
+            } else {
+                continue;
+            };
 
             if !in_tree[v] && w < key[v] {
                 key[v] = w;
@@ -195,11 +197,7 @@ fn min_weight_perfect_matching_edge(
 }
 
 /// Get Euclidean distance between two nodes by looking up edge weight.
-fn euclidean_distance(
-    grph: &Graph<String, f64, petgraph::Undirected>,
-    u: usize,
-    v: usize,
-) -> f64 {
+fn euclidean_distance(grph: &Graph<String, f64, petgraph::Undirected>, u: usize, v: usize) -> f64 {
     let ui = NodeIndex::new(u);
     let vi = NodeIndex::new(v);
     if let Some(edge_idx) = grph.find_edge(ui, vi) {
@@ -226,7 +224,9 @@ fn hierholzer_eulerian(_n: usize, edges: &[(usize, usize)]) -> Vec<usize> {
     for &(u, v) in edges {
         adj.entry(u).or_default().push(v);
         adj.entry(v).or_default().push(u);
-        *edge_count.entry(if u < v { (u, v) } else { (v, u) }).or_insert(0) += 1;
+        *edge_count
+            .entry(if u < v { (u, v) } else { (v, u) })
+            .or_insert(0) += 1;
     }
 
     // Find start vertex (the minimum vertex with edges, for determinism)
@@ -324,16 +324,17 @@ pub fn total_distance(path: &[usize], grph: &Graph<String, f64, petgraph::Undire
 }
 
 /// Create a complete graph with random Euclidean (L2) edge weights.
-pub fn make_l2_graph(n: usize, seed: u64) -> (Graph<String, f64, petgraph::Undirected>, Vec<(f64, f64)>) {
+pub fn make_l2_graph(
+    n: usize,
+    seed: u64,
+) -> (Graph<String, f64, petgraph::Undirected>, Vec<(f64, f64)>) {
     let mut rng = SimpleRng::new(seed);
     let positions: Vec<(f64, f64)> = (0..n)
         .map(|_| (rng.next_f64() * 100.0, rng.next_f64() * 100.0))
         .collect();
 
     let mut grph = Graph::<String, f64, petgraph::Undirected>::new_undirected();
-    let indices: Vec<NodeIndex> = (0..n)
-        .map(|i| grph.add_node(format!("n{}", i)))
-        .collect();
+    let indices: Vec<NodeIndex> = (0..n).map(|i| grph.add_node(format!("n{}", i))).collect();
 
     for i in 0..n {
         for j in (i + 1)..n {
@@ -348,16 +349,17 @@ pub fn make_l2_graph(n: usize, seed: u64) -> (Graph<String, f64, petgraph::Undir
 }
 
 /// Create a complete graph with random Manhattan (L1) edge weights.
-pub fn make_l1_graph(n: usize, seed: u64) -> (Graph<String, f64, petgraph::Undirected>, Vec<(f64, f64)>) {
+pub fn make_l1_graph(
+    n: usize,
+    seed: u64,
+) -> (Graph<String, f64, petgraph::Undirected>, Vec<(f64, f64)>) {
     let mut rng = SimpleRng::new(seed);
     let positions: Vec<(f64, f64)> = (0..n)
         .map(|_| (rng.next_f64() * 100.0, rng.next_f64() * 100.0))
         .collect();
 
     let mut grph = Graph::<String, f64, petgraph::Undirected>::new_undirected();
-    let indices: Vec<NodeIndex> = (0..n)
-        .map(|i| grph.add_node(format!("n{}", i)))
-        .collect();
+    let indices: Vec<NodeIndex> = (0..n).map(|i| grph.add_node(format!("n{}", i))).collect();
 
     for i in 0..n {
         for j in (i + 1)..n {
@@ -378,11 +380,16 @@ struct SimpleRng {
 
 impl SimpleRng {
     fn new(seed: u64) -> Self {
-        Self { state: if seed == 0 { 1 } else { seed } }
+        Self {
+            state: if seed == 0 { 1 } else { seed },
+        }
     }
 
     fn next_f64(&mut self) -> f64 {
-        self.state = self.state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        self.state = self
+            .state
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         (self.state >> 11) as f64 / (1u64 << 53) as f64
     }
 }

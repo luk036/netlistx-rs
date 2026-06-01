@@ -248,7 +248,11 @@ mod tests {
                     (grph[e.source()] == *sol_nodes[i] && grph[e.target()] == *sol_nodes[j])
                         || (grph[e.source()] == *sol_nodes[j] && grph[e.target()] == *sol_nodes[i])
                 });
-                assert!(!has_edge, "Edge between {} and {}", sol_nodes[i], sol_nodes[j]);
+                assert!(
+                    !has_edge,
+                    "Edge between {} and {}",
+                    sol_nodes[i], sol_nodes[j]
+                );
             }
         }
         // Verify maximal: no vertex can be added
@@ -257,7 +261,11 @@ mod tests {
             if !sol.contains(node) {
                 // Check if adding would break independence
                 let adjacent_to_sol = grph.neighbors(node_idx).any(|n| sol.contains(&grph[n]));
-                assert!(adjacent_to_sol, "Node {} could be added to independent set", node);
+                assert!(
+                    adjacent_to_sol,
+                    "Node {} could be added to independent set",
+                    node
+                );
             }
         }
     }
