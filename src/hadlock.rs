@@ -636,7 +636,6 @@ mod tests {
         ];
         let matching = min_weight_perfect_matching(&dist, 4);
         assert_eq!(matching.len(), 2);
-        // Check it found SOME matching
         let mut used = [false; 4];
         for &(i, j) in &matching {
             assert!(!used[i]);
@@ -644,5 +643,79 @@ mod tests {
             used[i] = true;
             used[j] = true;
         }
+    }
+
+    #[test]
+    fn test_edge_key() {
+        assert_eq!(edge_key("a", "b"), "a--b");
+        assert_eq!(edge_key("b", "a"), "a--b");
+        assert_eq!(edge_key("x", "x"), "x--x");
+    }
+
+    #[test]
+    fn test_all_edges_empty() {
+        let grph = Graph::<String, f64, petgraph::Undirected>::new_undirected();
+        let edges = all_edges(&grph);
+        assert!(edges.is_empty());
+    }
+
+    #[test]
+    fn test_biconnected_components_empty() {
+        let grph = Graph::<String, f64, petgraph::Undirected>::new_undirected();
+        let components = biconnected_components(&grph);
+        assert!(components.is_empty());
+    }
+
+    #[test]
+    fn test_biconnected_components_single_edge() {
+        let mut grph = Graph::<String, f64, petgraph::Undirected>::new_undirected();
+        let n0 = grph.add_node("n0".to_string());
+        let n1 = grph.add_node("n1".to_string());
+        grph.add_edge(n0, n1, 1.0);
+        let components = biconnected_components(&grph);
+        assert_eq!(components.len(), 1);
+        assert_eq!(components[0].node_count(), 2);
+    }
+
+    #[test]
+    fn test_mwpm_odd_count_returns_empty() {
+        let dist = vec![
+            vec![0.0, 1.0, 2.0],
+            vec![1.0, 0.0, 3.0],
+            vec![2.0, 3.0, 0.0],
+        ];
+        let matching = min_weight_perfect_matching(&dist, 3);
+        assert!(matching.is_empty());
+    }
+
+    #[test]
+    fn test_mwpm_n_less_than_2() {
+        let dist = vec![vec![0.0]];
+        let matching = min_weight_perfect_matching(&dist, 1);
+        assert!(matching.is_empty());
+    }
+
+    #[test]
+    fn test_get_edge_weight() {
+        let mut grph = Graph::<String, f64, petgraph::Undirected>::new_undirected();
+        let n0 = grph.add_node("n0".to_string());
+        let n1 = grph.add_node("n1".to_string());
+        grph.add_edge(n0, n1, 42.0);
+        assert!((get_edge_weight(&grph, "n0--n1") - 42.0).abs() < 1e-10);
+        assert!((get_edge_weight(&grph, "n0--n2") - 1.0).abs() < 1e-10);
+        assert!((get_edge_weight(&grph, "invalid") - 1.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_validate_max_cut_simple() {
+        let mut grph = Graph::<String, f64, petgraph::Undirected>::new_undirected();
+        let n0 = grph.add_node("n0".to_string());
+        let n1 = grph.add_node("n1".to_string());
+        grph.add_edge(n0, n1, 5.0);
+        let mut cut = HashSet::new();
+        cut.insert("n0--n1".to_string());
+        let (valid, weight) = validate_max_cut(&grph, &cut);
+        assert!(valid);
+        assert!((weight - 5.0).abs() < 1e-10);
     }
 }

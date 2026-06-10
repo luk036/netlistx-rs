@@ -681,6 +681,37 @@ mod tests {
         let nets = netlist.get_module_nets("nonexistent");
         assert!(nets.is_empty());
     }
+
+    #[test]
+    fn test_get_max_net_degree() {
+        let mut netlist = Netlist::new();
+        netlist.add_module("m1".to_string()).unwrap();
+        netlist.add_module("m2".to_string()).unwrap();
+        netlist.add_net("n1".to_string()).unwrap();
+        netlist.add_net("n2".to_string()).unwrap();
+        netlist.add_edge("n1", "m1").unwrap();
+        netlist.add_edge("n1", "m2").unwrap();
+        netlist.add_edge("n2", "m1").unwrap();
+        assert_eq!(netlist.get_max_net_degree(), 2);
+    }
+
+    #[test]
+    fn test_get_net_weight() {
+        let mut netlist = Netlist::new();
+        netlist.add_net("n1".to_string()).unwrap();
+        assert_eq!(netlist.get_net_weight("n1"), 1);
+        assert_eq!(netlist.get_net_weight("nonexistent"), 1);
+    }
+
+    #[test]
+    fn test_number_of_nodes() {
+        let mut netlist = Netlist::new();
+        assert_eq!(netlist.number_of_nodes(), 0);
+        netlist.add_module("m1".to_string()).unwrap();
+        assert_eq!(netlist.number_of_nodes(), 1);
+        netlist.add_net("n1".to_string()).unwrap();
+        assert_eq!(netlist.number_of_nodes(), 2);
+    }
 }
 
 #[cfg(test)]
@@ -688,6 +719,7 @@ mod tests {
 mod quickcheck_impls {
     use super::*;
     use quickcheck::{Arbitrary, Gen};
+    use quickcheck_macros::quickcheck;
 
     impl Arbitrary for Netlist {
         fn arbitrary(g: &mut Gen) -> Self {
@@ -722,5 +754,14 @@ mod quickcheck_impls {
 
             builder.build().unwrap_or_default()
         }
+    }
+
+    #[quickcheck]
+    fn qc_netlist_arbitrary_is_valid(netlist: Netlist) -> bool {
+        let num_modules = netlist.num_modules();
+        let num_nets = netlist.num_nets();
+        netlist.number_of_nodes() == num_modules + num_nets
+            && netlist.modules.len() == num_modules
+            && netlist.nets.len() == num_nets
     }
 }

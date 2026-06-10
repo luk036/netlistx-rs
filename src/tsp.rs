@@ -484,4 +484,89 @@ mod tests {
         assert_eq!(grph.edge_count(), 10);
         assert_eq!(pos.len(), 5);
     }
+
+    #[test]
+    fn test_christofides_empty() {
+        let grph = Graph::<String, f64, petgraph::Undirected>::new_undirected();
+        let tour = christofides_tsp(&grph);
+        assert!(tour.is_empty());
+    }
+
+    #[test]
+    fn test_christofides_single_node() {
+        let mut grph = Graph::<String, f64, petgraph::Undirected>::new_undirected();
+        grph.add_node("n0".to_string());
+        let tour = christofides_tsp(&grph);
+        assert_eq!(tour, vec![0, 0]);
+    }
+
+    #[test]
+    fn test_christofides_two_node() {
+        let mut grph = Graph::<String, f64, petgraph::Undirected>::new_undirected();
+        let n0 = grph.add_node("n0".to_string());
+        let n1 = grph.add_node("n1".to_string());
+        grph.add_edge(n0, n1, 10.0);
+        let tour = christofides_tsp(&grph);
+        assert_eq!(tour.len(), 3);
+        assert_eq!(tour[0], tour[tour.len() - 1]);
+    }
+
+    #[test]
+    fn test_mst_empty() {
+        let grph = Graph::<String, f64, petgraph::Undirected>::new_undirected();
+        let edges = mst(&grph);
+        assert!(edges.is_empty());
+    }
+
+    #[test]
+    fn test_mst_single() {
+        let mut grph = Graph::<String, f64, petgraph::Undirected>::new_undirected();
+        grph.add_node("n0".to_string());
+        let edges = mst(&grph);
+        assert!(edges.is_empty());
+    }
+
+    #[test]
+    fn test_total_distance_empty() {
+        let grph = Graph::<String, f64, petgraph::Undirected>::new_undirected();
+        let dist = total_distance(&[], &grph);
+        assert!((dist - 0.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_hierholzer_empty() {
+        let circuit = hierholzer_eulerian(0, &[]);
+        assert!(circuit.is_empty());
+    }
+
+    #[test]
+    fn test_min_weight_perfect_matching_single_odd() {
+        let mut grph = Graph::<String, f64, petgraph::Undirected>::new_undirected();
+        grph.add_node("n0".to_string());
+        let matching = min_weight_perfect_matching_edge(&grph, &[]);
+        assert!(matching.is_empty());
+    }
+
+    #[test]
+    fn test_two_opt_no_improvement_possible() {
+        let (grph, _) = make_l2_graph(3, 42);
+        let tour = christofides_tsp(&grph);
+        let refined = two_opt(&tour, &grph);
+        assert_eq!(refined.len(), tour.len());
+        assert_eq!(refined[0], refined[refined.len() - 1]);
+    }
+
+    #[test]
+    fn test_two_opt_already_optimal() {
+        let mut grph = Graph::<String, f64, petgraph::Undirected>::new_undirected();
+        let n0 = grph.add_node("n0".to_string());
+        let n1 = grph.add_node("n1".to_string());
+        let n2 = grph.add_node("n2".to_string());
+        grph.add_edge(n0, n1, 1.0);
+        grph.add_edge(n1, n2, 1.0);
+        grph.add_edge(n0, n2, 10.0);
+        let tour = two_opt(&[0, 1, 2, 0], &grph);
+        assert_eq!(tour.len(), 4);
+        assert_eq!(tour[0], tour[tour.len() - 1]);
+    }
 }

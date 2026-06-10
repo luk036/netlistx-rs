@@ -285,4 +285,80 @@ mod tests {
         assert_eq!(cost, 2);
         assert_eq!(sol.len(), 2);
     }
+
+    #[test]
+    fn test_min_vertex_cover_fast_disconnected() {
+        let grph = make_graph(&[(0, 1), (2, 3)]);
+        let weight: HashMap<String, u32> = [
+            ("n0".to_string(), 1),
+            ("n1".to_string(), 1),
+            ("n2".to_string(), 1),
+            ("n3".to_string(), 1),
+        ]
+        .iter()
+        .cloned()
+        .collect();
+        let mut coverset = HashSet::new();
+        let (sol, cost) = min_vertex_cover_fast(&grph, &weight, &mut coverset);
+        assert_eq!(cost, 2);
+        for edge in grph.raw_edges() {
+            let u = &grph[edge.source()];
+            let v = &grph[edge.target()];
+            assert!(sol.contains(u) || sol.contains(v));
+        }
+    }
+
+    #[test]
+    fn test_min_vertex_cover_fast_single_edge() {
+        let grph = make_graph(&[(0, 1)]);
+        let weight: HashMap<String, u32> = [("n0".to_string(), 5), ("n1".to_string(), 3)]
+            .iter()
+            .cloned()
+            .collect();
+        let mut coverset = HashSet::new();
+        let (sol, cost) = min_vertex_cover_fast(&grph, &weight, &mut coverset);
+        assert!(sol.contains("n1"));
+        assert_eq!(cost, 3);
+    }
+
+    #[test]
+    fn test_min_maximal_independent_set_disconnected() {
+        let grph = make_graph(&[(0, 1), (2, 3)]);
+        let weight: HashMap<String, u32> = [
+            ("n0".to_string(), 1),
+            ("n1".to_string(), 1),
+            ("n2".to_string(), 1),
+            ("n3".to_string(), 1),
+        ]
+        .iter()
+        .cloned()
+        .collect();
+        let mut indset = HashSet::new();
+        let mut dep = HashSet::new();
+        let (sol, cost) = min_maximal_independent_set(&grph, &weight, &mut indset, &mut dep);
+        assert_eq!(cost, 2);
+        assert_eq!(sol.len(), 2);
+        for edge in grph.raw_edges() {
+            let u = &grph[edge.source()];
+            let v = &grph[edge.target()];
+            assert!(!(sol.contains(u) && sol.contains(v)));
+        }
+    }
+
+    #[test]
+    fn test_min_vertex_cover_fast_with_initial_coverset() {
+        let grph = make_graph(&[(0, 1), (1, 2)]);
+        let weight: HashMap<String, u32> = [
+            ("n0".to_string(), 1),
+            ("n1".to_string(), 2),
+            ("n2".to_string(), 1),
+        ]
+        .iter()
+        .cloned()
+        .collect();
+        let mut coverset: HashSet<String> = [("n1".to_string())].iter().cloned().collect();
+        let (sol, cost) = min_vertex_cover_fast(&grph, &weight, &mut coverset);
+        assert_eq!(cost, 0);
+        assert!(sol.contains("n1"));
+    }
 }

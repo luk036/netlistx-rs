@@ -378,4 +378,41 @@ mod tests {
         assert!(soln.contains("v1"));
         assert_eq!(cost, 1);
     }
+
+    #[test]
+    fn test_rand_hyper_vertex_cover_empty_net() {
+        let mut hyprgraph = Netlist::new();
+        hyprgraph.add_module("m1".to_string()).unwrap();
+        hyprgraph.add_net("isolated".to_string()).unwrap();
+        let mut weight = HashMap::new();
+        weight.insert("m1".to_string(), 1i32);
+        let coverset = HashSet::new();
+        let (soln, cost) = rand_hyper_vertex_cover(&hyprgraph, &weight, 42, &coverset);
+        assert_eq!(cost, 0);
+        assert!(soln.is_empty());
+    }
+
+    #[test]
+    fn test_rand_vertex_cover_empty_graph() {
+        let grph = UnGraph::<String, ()>::new_undirected();
+        let weight: HashMap<String, i32> = HashMap::new();
+        let coverset = HashSet::new();
+        let (soln, cost) = rand_vertex_cover(&grph, &weight, 0, &coverset);
+        assert!(soln.is_empty());
+        assert_eq!(cost, 0);
+    }
+
+    #[cfg(feature = "rayon")]
+    #[test]
+    fn test_rand_hyper_vertex_cover_mt_simple() {
+        let (hyprgraph, weight) = create_weighted_graph();
+        let coverset = HashSet::new();
+        let (soln, cost) = rand_hyper_vertex_cover_mt(&hyprgraph, &weight, 8, 42, &coverset);
+        for net in &hyprgraph.nets {
+            let modules = hyprgraph.get_net_modules(net);
+            let covered = modules.iter().any(|m| soln.contains(m));
+            assert!(covered, "Net {} is not covered", net);
+        }
+        assert!(cost >= 1);
+    }
 }

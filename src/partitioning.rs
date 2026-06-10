@@ -378,4 +378,66 @@ mod tests {
         let kl: KernighanLin = Default::default();
         assert_eq!(kl.max_iterations, 100);
     }
+
+    #[test]
+    fn test_partition_cut_size_nonzero() {
+        let mut netlist = Netlist::new();
+        netlist.add_module("m1".to_string()).unwrap();
+        netlist.add_module("m2".to_string()).unwrap();
+        netlist.add_module("m3".to_string()).unwrap();
+        netlist.add_module("m4".to_string()).unwrap();
+        netlist.add_net("n1".to_string()).unwrap();
+        netlist.add_edge("n1", "m1").unwrap();
+        netlist.add_edge("n1", "m4").unwrap();
+
+        let fm = FiducciaMattheyses::new();
+        let result = fm.partition(&netlist, 0.5).unwrap();
+        assert_eq!(result.cut_size, 1);
+    }
+
+    #[test]
+    fn test_kl_partition_cut_size_nonzero() {
+        let mut netlist = Netlist::new();
+        netlist.add_module("m1".to_string()).unwrap();
+        netlist.add_module("m2".to_string()).unwrap();
+        netlist.add_module("m3".to_string()).unwrap();
+        netlist.add_module("m4".to_string()).unwrap();
+        netlist.add_net("n1".to_string()).unwrap();
+        netlist.add_edge("n1", "m1").unwrap();
+        netlist.add_edge("n1", "m4").unwrap();
+
+        let kl = KernighanLin::new();
+        let result = kl.partition(&netlist, 0.5).unwrap();
+        assert_eq!(result.cut_size, 1);
+    }
+
+    #[test]
+    fn test_partition_balance_factor_zero() {
+        let mut netlist = Netlist::new();
+        netlist.add_module("m1".to_string()).unwrap();
+        netlist.add_module("m2".to_string()).unwrap();
+        let fm = FiducciaMattheyses::new();
+        let result = fm.partition(&netlist, 0.0).unwrap();
+        let side0_count = result
+            .assignment
+            .values()
+            .filter(|&&p| p == Partition::Side0)
+            .count();
+        assert_eq!(side0_count, 0);
+    }
+
+    #[test]
+    fn test_partition_balance_factor_one() {
+        let mut netlist = Netlist::new();
+        netlist.add_module("m1".to_string()).unwrap();
+        netlist.add_module("m2".to_string()).unwrap();
+        let fm = FiducciaMattheyses::new();
+        let result = fm.partition(&netlist, 1.0).unwrap();
+        let side0_count = result
+            .assignment
+            .values()
+            .filter(|&&p| p == Partition::Side0)
+            .count();
+        assert_eq!(side0_count, 2);
+    }
 }

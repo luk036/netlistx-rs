@@ -185,4 +185,14 @@ mod tests {
         assert!(covered.is_empty());
         assert_eq!(cost, 0);
     }
+
+    #[test]
+    fn test_min_hyper_vertex_cover_with_coverset() {
+        let hyprgraph = create_simple_hypergraph();
+        let weight = default_weight(&hyprgraph);
+        let mut coverset: HashSet<String> = [("v0".to_string())].iter().cloned().collect();
+        let (covered, _cost) = min_hyper_vertex_cover(&hyprgraph, &weight, &mut coverset);
+        assert_all_nets_covered(&hyprgraph, &covered);
+        assert!(covered.contains("v0"));
+    }
 }
