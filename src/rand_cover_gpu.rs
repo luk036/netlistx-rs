@@ -188,6 +188,7 @@ where
 
 /// Try to execute trials on GPU.
 #[cfg(feature = "cuda")]
+#[allow(clippy::too_many_arguments)]
 fn try_gpu_execution<W>(
     edges_flat: &[i32],
     num_edges: usize,

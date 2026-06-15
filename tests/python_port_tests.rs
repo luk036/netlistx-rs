@@ -13,9 +13,9 @@ use netlistx_rs::graph_cover::{
     min_cycle_cover, min_odd_cycle_cover, min_vertex_cover as graph_min_vc,
 };
 use netlistx_rs::hadlock::{solve_hadlock_max_cut, validate_max_cut};
+use netlistx_rs::io::{read_are, read_netlist};
 use netlistx_rs::netlist_algo::{min_maximal_matching, min_maximal_matching_new, min_vertex_cover};
 use netlistx_rs::rand_cover::{rand_hyper_vertex_cover, rand_vertex_cover};
-use netlistx_rs::io::{read_are, read_netlist};
 use netlistx_rs::tsp::{
     christofides_tsp, make_l1_graph, make_l2_graph, solve_christofides_2opt_tsp, total_distance,
     two_opt,
@@ -1237,14 +1237,17 @@ fn test_graph_algo_min_cycle_cover_cost_drawf() {
     let (sol, cost) = min_cycle_cover(&grph, &weight, &mut coverset);
     assert!(cost >= 0);
     // Verify remaining graph is acyclic after removing cover
-    let remaining: HashSet<String> = grph.node_indices()
+    let remaining: HashSet<String> = grph
+        .node_indices()
         .map(|i| grph[i].clone())
         .filter(|n| !sol.contains(n))
         .collect();
     let mut visited: HashSet<String> = HashSet::new();
     for node_idx in grph.node_indices() {
         let node = &grph[node_idx];
-        if !remaining.contains(node) || visited.contains(node) { continue; }
+        if !remaining.contains(node) || visited.contains(node) {
+            continue;
+        }
         let mut stack = vec![(node.clone(), None::<String>)];
         let mut local_visited = HashSet::new();
         while let Some((current, parent_opt)) = stack.pop() {
@@ -1256,8 +1259,12 @@ fn test_graph_algo_min_cycle_cover_cost_drawf() {
             let current_idx = grph.node_indices().find(|i| grph[*i] == current).unwrap();
             for neighbor_idx in grph.neighbors(current_idx) {
                 let neighbor = &grph[neighbor_idx];
-                if !remaining.contains(neighbor) { continue; }
-                if parent_opt.as_ref() == Some(neighbor) { continue; }
+                if !remaining.contains(neighbor) {
+                    continue;
+                }
+                if parent_opt.as_ref() == Some(neighbor) {
+                    continue;
+                }
                 stack.push((neighbor.clone(), Some(current.clone())));
             }
         }
@@ -1281,11 +1288,10 @@ fn test_graph_algo_min_vertex_cover_fast_weighted_specific() {
     let n0 = grph.add_node("n0".to_string());
     let n1 = grph.add_node("n1".to_string());
     grph.add_edge(n0, n1, ());
-    let weight: HashMap<String, u32> =
-        [("n0".to_string(), 1), ("n1".to_string(), 2)]
-            .iter()
-            .cloned()
-            .collect();
+    let weight: HashMap<String, u32> = [("n0".to_string(), 1), ("n1".to_string(), 2)]
+        .iter()
+        .cloned()
+        .collect();
     let mut coverset = HashSet::new();
     let (sol, cost) = min_vertex_cover_fast(&grph, &weight, &mut coverset);
     // Lighter vertex n0 should be chosen
@@ -1319,11 +1325,14 @@ fn test_cover_min_cycle_cover_complex() {
     grph.add_edge(nodes[7], nodes[8], ());
     grph.add_edge(nodes[8], nodes[1], ());
     // Different weights: weight[i] = i + 1
-    let weight: HashMap<String, u32> = (0..9).map(|i| (format!("n{}", i), (i + 1) as u32)).collect();
+    let weight: HashMap<String, u32> = (0..9)
+        .map(|i| (format!("n{}", i), (i + 1) as u32))
+        .collect();
     let mut coverset = HashSet::new();
     let (sol, _cost) = min_cycle_cover(&grph, &weight, &mut coverset);
     // Verify graph is cycle-free after removing cover
-    let remaining: HashSet<String> = grph.node_indices()
+    let remaining: HashSet<String> = grph
+        .node_indices()
         .map(|i| grph[i].clone())
         .filter(|n| !sol.contains(n))
         .collect();
@@ -1344,8 +1353,12 @@ fn test_cover_min_cycle_cover_complex() {
             let current_idx = grph.node_indices().find(|i| grph[*i] == current).unwrap();
             for neighbor_idx in grph.neighbors(current_idx) {
                 let neighbor = &grph[neighbor_idx];
-                if !remaining.contains(neighbor) { continue; }
-                if parent_opt.as_ref() == Some(neighbor) { continue; }
+                if !remaining.contains(neighbor) {
+                    continue;
+                }
+                if parent_opt.as_ref() == Some(neighbor) {
+                    continue;
+                }
                 stack.push((neighbor.clone(), Some(current.clone())));
             }
         }
@@ -1375,14 +1388,17 @@ fn test_cover_min_odd_cycle_cover_complex() {
     let mut coverset = HashSet::new();
     let (sol, _cost) = min_odd_cycle_cover(&grph, &weight, &mut coverset);
     // Verify remaining graph is bipartite
-    let remaining: HashSet<String> = grph.node_indices()
+    let remaining: HashSet<String> = grph
+        .node_indices()
         .map(|i| grph[i].clone())
         .filter(|n| !sol.contains(n))
         .collect();
     let mut color: HashMap<String, Option<bool>> = HashMap::new();
     for node_idx in grph.node_indices() {
         let node = &grph[node_idx];
-        if !remaining.contains(node) || color.contains_key(node) { continue; }
+        if !remaining.contains(node) || color.contains_key(node) {
+            continue;
+        }
         let mut queue = std::collections::VecDeque::new();
         color.insert(node.clone(), Some(true));
         queue.push_back(node.clone());
@@ -1390,7 +1406,9 @@ fn test_cover_min_odd_cycle_cover_complex() {
             let current_idx = grph.node_indices().find(|i| grph[*i] == current).unwrap();
             for neighbor_idx in grph.neighbors(current_idx) {
                 let neighbor = &grph[neighbor_idx];
-                if !remaining.contains(neighbor) { continue; }
+                if !remaining.contains(neighbor) {
+                    continue;
+                }
                 if !color.contains_key(neighbor) {
                     color.insert(neighbor.clone(), color[&current].map(|c| !c));
                     queue.push_back(neighbor.clone());
@@ -1450,12 +1468,17 @@ fn test_pd_cover_odd_cycle_square_and_triangle() {
     let mut coverset = HashSet::new();
     let (sol, _cost) = min_odd_cycle_cover(&grph, &weight, &mut coverset);
     // Should only pick vertices from the triangle (n4, n5, n6), not the square (n0-n3)
-    let in_triangle: HashSet<String> =
-        ["n4".to_string(), "n5".to_string(), "n6".to_string()]
-            .iter().cloned().collect();
+    let in_triangle: HashSet<String> = ["n4".to_string(), "n5".to_string(), "n6".to_string()]
+        .iter()
+        .cloned()
+        .collect();
     assert!(sol.iter().any(|v| in_triangle.contains(v)));
     for v in &["n0", "n1", "n2", "n3"] {
-        assert!(!sol.contains(*v), "Square node {} should not be in odd cycle cover", v);
+        assert!(
+            !sol.contains(*v),
+            "Square node {} should not be in odd cycle cover",
+            v
+        );
     }
 }
 
@@ -1520,7 +1543,10 @@ fn test_hadlock_square_diagonal() {
     for ek in &cut {
         assert!(all_edges.contains(ek), "Cut edge {} not in graph", ek);
     }
-    assert!(!cut.is_empty(), "Cut should not be empty for square with diagonal");
+    assert!(
+        !cut.is_empty(),
+        "Cut should not be empty for square with diagonal"
+    );
 }
 
 #[test]
@@ -1568,7 +1594,9 @@ fn test_tsp_uniform_weights() {
     let _grph = make_l2_graph(6, 42);
     // Overwrite all edges with weight 1.0
     let mut uniform_grph = petgraph::Graph::<String, f64, petgraph::Undirected>::new_undirected();
-    let indices: Vec<_> = (0..6).map(|i| uniform_grph.add_node(format!("n{}", i))).collect();
+    let indices: Vec<_> = (0..6)
+        .map(|i| uniform_grph.add_node(format!("n{}", i)))
+        .collect();
     for i in 0..6 {
         for j in (i + 1)..6 {
             uniform_grph.add_edge(indices[i], indices[j], 1.0);
@@ -1620,11 +1648,17 @@ fn test_tsp_make_l2_graph_basic() {
     let (src, dst) = grph.edge_endpoints(edge_idx).unwrap();
     let actual = grph[edge_idx];
     // The first edge connects nodes 0 and 1 (complete graph is built with sorted edges)
-    let found = if (src.index() == 0 && dst.index() == 1) || (src.index() == 1 && dst.index() == 0) {
+    let found = if (src.index() == 0 && dst.index() == 1) || (src.index() == 1 && dst.index() == 0)
+    {
         actual
     } else {
         // Find the edge between 0 and 1
-        let e = grph.find_edge(petgraph::graph::NodeIndex::new(0), petgraph::graph::NodeIndex::new(1)).unwrap();
+        let e = grph
+            .find_edge(
+                petgraph::graph::NodeIndex::new(0),
+                petgraph::graph::NodeIndex::new(1),
+            )
+            .unwrap();
         grph[e]
     };
     assert!((found - expected).abs() < 1e-10);
@@ -1637,7 +1671,10 @@ fn test_tsp_make_l2_graph_different_seed() {
     let (grph2, _) = make_l2_graph(5, 2);
     let total1: f64 = grph1.edge_indices().map(|e| grph1[e]).sum();
     let total2: f64 = grph2.edge_indices().map(|e| grph2[e]).sum();
-    assert!((total1 - total2).abs() > 1e-10, "Different seeds should give different total weights");
+    assert!(
+        (total1 - total2).abs() > 1e-10,
+        "Different seeds should give different total weights"
+    );
 }
 
 #[test]
@@ -1669,16 +1706,26 @@ fn test_cover_hyper_vertex_cover_with_coverset() {
         ("m0".to_string(), 1),
         ("m1".to_string(), 1),
         ("m2".to_string(), 1),
-    ].iter().cloned().collect();
+    ]
+    .iter()
+    .cloned()
+    .collect();
 
     // Use min_hyper_vertex_cover from cover module with pre-set coverset
     let mut coverset: HashSet<String> = [("m0".to_string())].iter().cloned().collect();
     let (sol, _cost) = netlistx_rs::cover::min_hyper_vertex_cover(&netlist, &weight, &mut coverset);
-    assert!(sol.contains("m0"), "Pre-existing vertex should be in the cover");
+    assert!(
+        sol.contains("m0"),
+        "Pre-existing vertex should be in the cover"
+    );
     // Verify all nets covered
     for net in &netlist.nets {
         let modules = netlist.get_net_modules(net);
-        assert!(modules.iter().any(|m| sol.contains(m)), "Net {} uncovered", net);
+        assert!(
+            modules.iter().any(|m| sol.contains(m)),
+            "Net {} uncovered",
+            net
+        );
     }
 }
 
@@ -1686,10 +1733,7 @@ fn test_cover_hyper_vertex_cover_with_coverset() {
 fn test_cover_bfs_disconnected_components() {
     // Port of TestGenericBfsCycleEdgeCases.test_disconnected_components
     // Two triangles (0-1-2-0) and (3-4-5-3)
-    let grph = make_petgraph(&[
-        (0, 1), (1, 2), (2, 0),
-        (3, 4), (4, 5), (5, 3),
-    ]);
+    let grph = make_petgraph(&[(0, 1), (1, 2), (2, 0), (3, 4), (4, 5), (5, 3)]);
     let weight = unit_weight(&grph);
     let mut coverset = HashSet::new();
     let (sol, cost) = min_cycle_cover(&grph, &weight, &mut coverset);
@@ -1709,7 +1753,12 @@ fn test_cover_vertex_cover_with_preexisting_coverset() {
     for edge in grph.raw_edges() {
         let u = &grph[edge.source()];
         let v = &grph[edge.target()];
-        assert!(sol.contains(u) || sol.contains(v), "Edge {}--{} uncovered", u, v);
+        assert!(
+            sol.contains(u) || sol.contains(v),
+            "Edge {}--{} uncovered",
+            u,
+            v
+        );
     }
 }
 
@@ -1742,8 +1791,12 @@ fn test_matching_unequal_weights_triggers_alternative_selection() {
     // Port of test_unequal_weights_triggers_alternative_selection
     // Chain: N1 (weight 1) - [m0, m1] - N2 (weight 5) - [m1, m2] - N3 (weight 1) - [m2, m3]
     let mut netlist = Netlist::new();
-    for i in 0..4 { let _ = netlist.add_module(format!("m{}", i)); }
-    for n in &["N1", "N2", "N3"] { let _ = netlist.add_net(n.to_string()); }
+    for i in 0..4 {
+        let _ = netlist.add_module(format!("m{}", i));
+    }
+    for n in &["N1", "N2", "N3"] {
+        let _ = netlist.add_net(n.to_string());
+    }
     let _ = netlist.add_edge("N1", "m0");
     let _ = netlist.add_edge("N1", "m1");
     let _ = netlist.add_edge("N2", "m1");
@@ -1755,13 +1808,19 @@ fn test_matching_unequal_weights_triggers_alternative_selection() {
         ("N1".to_string(), 1),
         ("N2".to_string(), 5),
         ("N3".to_string(), 1),
-    ].iter().cloned().collect();
+    ]
+    .iter()
+    .cloned()
+    .collect();
 
     let mut matchset = HashSet::new();
     let mut dep = HashSet::new();
     let (sol, cost) = min_maximal_matching(&netlist, &weight, &mut matchset, &mut dep);
     // N2 is heavy, should NOT be in the matching; cost should be N1 + N3 = 2
-    assert!(!sol.contains("N2"), "Heavy net N2 should not be in matching");
+    assert!(
+        !sol.contains("N2"),
+        "Heavy net N2 should not be in matching"
+    );
     assert_eq!(cost, 2, "Expected cost 2 (N1+N3)");
 }
 
@@ -1770,8 +1829,12 @@ fn test_matching_different_weights_chain() {
     // Chain with descending weights [3, 2, 1]
     // Use i32 to avoid subtraction overflow
     let mut netlist = Netlist::new();
-    for i in 0..4 { let _ = netlist.add_module(format!("m{}", i)); }
-    for n in &["N1", "N2", "N3"] { let _ = netlist.add_net(n.to_string()); }
+    for i in 0..4 {
+        let _ = netlist.add_module(format!("m{}", i));
+    }
+    for n in &["N1", "N2", "N3"] {
+        let _ = netlist.add_net(n.to_string());
+    }
     let _ = netlist.add_edge("N1", "m0");
     let _ = netlist.add_edge("N1", "m1");
     let _ = netlist.add_edge("N2", "m1");
@@ -1783,20 +1846,31 @@ fn test_matching_different_weights_chain() {
         ("N1".to_string(), 3),
         ("N2".to_string(), 2),
         ("N3".to_string(), 1),
-    ].iter().cloned().collect();
+    ]
+    .iter()
+    .cloned()
+    .collect();
 
     let mut matchset = HashSet::new();
     let mut dep = HashSet::new();
     let (_sol, cost) = min_maximal_matching(&netlist, &weight, &mut matchset, &mut dep);
-    assert!(cost <= 3, "Expected cost <= 3 with descending weights, got {}", cost);
+    assert!(
+        cost <= 3,
+        "Expected cost <= 3 with descending weights, got {}",
+        cost
+    );
 }
 
 #[test]
 fn test_matching_scattered_star_graph() {
     // Star-like: center module 0 connects to nets N1-N4 with weights [10, 1, 10, 10]
     let mut netlist = Netlist::new();
-    for i in 0..5 { let _ = netlist.add_module(format!("m{}", i)); }
-    for n in &["N1", "N2", "N3", "N4"] { let _ = netlist.add_net(n.to_string()); }
+    for i in 0..5 {
+        let _ = netlist.add_module(format!("m{}", i));
+    }
+    for n in &["N1", "N2", "N3", "N4"] {
+        let _ = netlist.add_net(n.to_string());
+    }
     let _ = netlist.add_edge("N1", "m0");
     let _ = netlist.add_edge("N1", "m1");
     let _ = netlist.add_edge("N2", "m0");
@@ -1811,7 +1885,10 @@ fn test_matching_scattered_star_graph() {
         ("N2".to_string(), 1),
         ("N3".to_string(), 10),
         ("N4".to_string(), 10),
-    ].iter().cloned().collect();
+    ]
+    .iter()
+    .cloned()
+    .collect();
 
     let mut matchset = HashSet::new();
     let mut dep = HashSet::new();
@@ -1820,7 +1897,11 @@ fn test_matching_scattered_star_graph() {
     assert!(sol.contains("N2"), "Light net N2 should be in matching");
     assert!(cost >= 1);
     // Only non-overlapping nets can be selected (all share module 0) -> only one net
-    assert_eq!(sol.len(), 1, "Only one net should be in matching (all share module 0)");
+    assert_eq!(
+        sol.len(),
+        1,
+        "Only one net should be in matching (all share module 0)"
+    );
 }
 
 // ============================================================================
@@ -1846,7 +1927,7 @@ fn test_hadlock_graph_with_bridge() {
     for ek in &cut {
         assert!(all_edges.contains(ek), "Cut edge {} not in graph", ek);
     }
-    assert!(cut.len() >= 1);
+    assert!(!cut.is_empty());
 }
 
 #[test]
@@ -1880,7 +1961,7 @@ fn test_hadlock_two_separate_triangles() {
     for ek in &cut {
         assert!(all_edges.contains(ek), "Cut edge {} not in graph", ek);
     }
-    assert!(cut.len() >= 1);
+    assert!(!cut.is_empty());
 }
 
 #[test]
@@ -1919,18 +2000,21 @@ fn test_rand_cover_hyper_empty_net() {
     hyprgraph.add_edge("N1", "m1").unwrap();
     // N2 has no connections (empty net)
 
-    let weight: HashMap<String, u32> = [
-        ("m0".to_string(), 1),
-        ("m1".to_string(), 1),
-    ].iter().cloned().collect();
+    let weight: HashMap<String, u32> = [("m0".to_string(), 1), ("m1".to_string(), 1)]
+        .iter()
+        .cloned()
+        .collect();
     let coverset = HashSet::new();
     let (soln, cost) = rand_hyper_vertex_cover(&hyprgraph, &weight, 42, &coverset);
     // N1 needs covering, N2 is empty and should be skipped
-    assert!(soln.len() >= 1);
+    assert!(!soln.is_empty());
     assert!(cost >= 1);
     // Verify N1 is covered
     let n1_modules = hyprgraph.get_net_modules("N1");
-    assert!(n1_modules.iter().any(|m| soln.contains(m)), "Net N1 not covered");
+    assert!(
+        n1_modules.iter().any(|m| soln.contains(m)),
+        "Net N1 not covered"
+    );
 }
 
 // ============================================================================
@@ -1945,9 +2029,9 @@ fn test_read_netd_early_break() {
     let mut tmp = tempfile::NamedTempFile::new().unwrap();
     // Format: first line = signal_pad_count numPins numNets numModules [pad_offset]
     // "0 1 1 2 0" means: signal=0, pins=1, nets=1, modules=2, pad_offset=0
-    write!(tmp, "0 1 1 2 0\n").unwrap();
-    write!(tmp, "a0 s 0\n").unwrap();
-    write!(tmp, "a1 l 0\n").unwrap(); // second entry should trigger break (only 1 pin expected)
+    writeln!(tmp, "0 1 1 2 0").unwrap();
+    writeln!(tmp, "a0 s 0").unwrap();
+    writeln!(tmp, "a1 l 0").unwrap(); // second entry should trigger break (only 1 pin expected)
     tmp.flush().unwrap();
 
     let netlist = read_netlist(tmp.path()).unwrap();
@@ -1958,9 +2042,9 @@ fn test_read_netd_early_break() {
 fn test_read_netd_empty_lines() {
     // Test empty lines in netd file
     let mut tmp = tempfile::NamedTempFile::new().unwrap();
-    write!(tmp, "0 1 1 2 0\n").unwrap();
-    write!(tmp, "\n").unwrap(); // empty line
-    write!(tmp, "a0 s 0\n").unwrap(); // first pin entry
+    writeln!(tmp, "0 1 1 2 0").unwrap();
+    writeln!(tmp).unwrap(); // empty line
+    writeln!(tmp, "a0 s 0").unwrap(); // first pin entry
     tmp.flush().unwrap();
 
     let netlist = read_netlist(tmp.path()).unwrap();
@@ -1971,15 +2055,15 @@ fn test_read_netd_empty_lines() {
 fn test_read_are_empty_lines() {
     // Test empty lines in are file
     let mut tmp_net = tempfile::NamedTempFile::new().unwrap();
-    write!(tmp_net, "0 2 2 3 0\n").unwrap();
-    write!(tmp_net, "a0 s 0\n").unwrap();
-    write!(tmp_net, "a1 l 0\n").unwrap();
+    writeln!(tmp_net, "0 2 2 3 0").unwrap();
+    writeln!(tmp_net, "a0 s 0").unwrap();
+    writeln!(tmp_net, "a1 l 0").unwrap();
     tmp_net.flush().unwrap();
 
     let mut tmp_are = tempfile::NamedTempFile::new().unwrap();
-    write!(tmp_are, "a0 10\n").unwrap();
-    write!(tmp_are, "\n").unwrap(); // empty line
-    write!(tmp_are, "a1 20\n").unwrap();
+    writeln!(tmp_are, "a0 10").unwrap();
+    writeln!(tmp_are).unwrap(); // empty line
+    writeln!(tmp_are, "a1 20").unwrap();
     tmp_are.flush().unwrap();
 
     let mut netlist = read_netlist(tmp_net.path()).unwrap();
@@ -2034,7 +2118,9 @@ fn test_netlist_algo_matching_with_predefined_dependents() {
 fn test_netlist_algo_matching_with_different_weights_cost_check() {
     let h = create_drawf();
     // Use i32 to avoid subtraction overflow
-    let weight: HashMap<String, i32> = h.nets.iter()
+    let weight: HashMap<String, i32> = h
+        .nets
+        .iter()
         .enumerate()
         .map(|(i, n)| (n.clone(), (i + 1) as i32))
         .collect();
