@@ -19,7 +19,7 @@ pub fn rand_hyper_vertex_cover_trial<W, R>(
 ) -> (HashSet<String>, W)
 where
     W: Copy + Into<f64> + std::ops::Add<Output = W> + std::cmp::PartialOrd + Default,
-    R: rand::Rng,
+    R: rand::RngExt,
 {
     let mut soln: HashSet<String> = coverset.iter().cloned().collect();
     let mut added_order: Vec<String> = Vec::new();
@@ -41,7 +41,7 @@ where
             continue;
         }
 
-        let r: f64 = rng.gen();
+        let r: f64 = rng.random();
         let mut cumulative = 0.0;
         let mut chosen = &modules[0];
 
@@ -176,7 +176,7 @@ pub fn rand_vertex_cover_trial<W, R>(
 ) -> (HashSet<String>, W)
 where
     W: Copy + Into<f64> + std::ops::Add<Output = W> + std::cmp::PartialOrd + Default,
-    R: rand::Rng,
+    R: rand::RngExt,
 {
     let mut soln: HashSet<String> = coverset.iter().cloned().collect();
     let mut added_order: Vec<String> = Vec::new();
@@ -190,7 +190,11 @@ where
         let w_u: f64 = (*weight.get(u).unwrap_or(&W::default())).into();
         let w_v: f64 = (*weight.get(v).unwrap_or(&W::default())).into();
         let threshold = w_v / (w_u + w_v);
-        let chosen = if rng.gen::<f64>() < threshold { u } else { v };
+        let chosen = if rng.random::<f64>() < threshold {
+            u
+        } else {
+            v
+        };
         soln.insert(chosen.clone());
         added_order.push(chosen.clone());
     }

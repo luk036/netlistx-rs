@@ -1,6 +1,8 @@
 //! Benchmarks for netlistx-rs
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use std::hint::black_box;
+
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use netlistx_rs::{
     partitioning::{FiducciaMattheyses, KernighanLin},
     statistics::NetlistStats,

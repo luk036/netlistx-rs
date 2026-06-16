@@ -13,7 +13,7 @@
 use std::collections::HashMap;
 use std::collections::HashSet;
 
-use rand::Rng;
+use rand::RngExt;
 use rand::SeedableRng;
 
 #[allow(dead_code)]
@@ -133,7 +133,7 @@ where
 
     // Generate seeds for each trial
     let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
-    let seeds: Vec<u64> = (0..num_trials).map(|_| rng.gen()).collect();
+    let seeds: Vec<u64> = (0..num_trials).map(|_| rng.random()).collect();
 
     let num_words = (n_vertices + 31) / 32;
 
