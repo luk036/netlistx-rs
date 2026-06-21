@@ -23,19 +23,24 @@ use core::convert::From;
 /// straightforward and intuitive subject to understand and work with.
 use core::ops::{Add, Mul, Sub};
 
-/// The function `archimedes` calculates the area of a triangle using Archimedes' formula with the
-/// lengths of the three sides provided as `Fraction<i64>` values.
+/// The function `archimedes` calculates the quadrea (16 $\times$ squared area) of a triangle
+/// using Archimedes' formula with the lengths of the three sides.
+///
+/// Archimedes' formula:
+///
+/// $$ \text{quadrea}(q_1, q_2, q_3) = 4 q_1 q_2 - (q_1 + q_2 - q_3)^2 $$
+///
+/// where $q_1, q_2, q_3$ are the squared lengths (quadrances) of the three sides.
 ///
 /// Arguments:
 ///
-/// * `q_1`: Represents the length of the first side of the triangle.
-/// * `q_2`: Represents the length of the second side of the triangle.
-/// * `q_3`: The parameter `q_3` represents the length of the third side of the triangle.
+/// * `q_1`: Quadrance of the first side.
+/// * `q_2`: Quadrance of the second side.
+/// * `q_3`: Quadrance of the third side.
 ///
 /// Returns:
 ///
-/// The function `archimedes` returns the area of a triangle computed using Archimedes' formula, given
-/// the lengths of the 3 sides.
+/// The quadrea (16 $\times$ squared area) of the triangle.
 ///
 /// Example:
 ///

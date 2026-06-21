@@ -64,7 +64,14 @@ pub fn christofides_tsp(grph: &Graph<String, f64, petgraph::Undirected>) -> Vec<
     shortcut_eulerian(&circuit)
 }
 
-/// Minimum Spanning Tree via simple Prim's algorithm.
+/// Minimum Spanning Tree via Prim's algorithm.
+///
+/// Finds a spanning tree minimizing total edge weight:
+///
+/// $$ \\min \\sum_{(u,v) \\in T} w(u,v) $$
+///
+/// Prim's algorithm grows the tree by repeatedly adding the minimum-weight
+/// edge connecting a vertex in the tree to one outside it.
 fn mst(grph: &Graph<String, f64, petgraph::Undirected>) -> Vec<(usize, usize)> {
     let n = grph.node_count();
     if n <= 1 {
@@ -283,6 +290,12 @@ fn shortcut_eulerian(circuit: &[usize]) -> Vec<usize> {
 }
 
 /// 2-opt local search heuristic to refine a TSP tour.
+///
+/// Reverses segments $\\[i, j-1\\]$ of the current tour to eliminate crossings:
+///
+/// $$ (v_1, \\ldots, v_i, v_{i+1}, \\ldots, v_j, \\ldots) \to (v_1, \\ldots, v_j, v_{j-1}, \\ldots, v_{i+1}, v_i, \\ldots) $$
+///
+/// A new tour is accepted if it has a lower total distance.
 pub fn two_opt(path: &[usize], grph: &Graph<String, f64, petgraph::Undirected>) -> Vec<usize> {
     let mut best_path = path.to_vec();
     let mut improved = true;
@@ -311,6 +324,10 @@ pub fn two_opt(path: &[usize], grph: &Graph<String, f64, petgraph::Undirected>) 
 }
 
 /// Calculate total distance of a Hamiltonian path/cycle.
+///
+/// $$ D = \sum_{i=0}^{k-1} w(v_i, v_{i+1}) $$
+///
+/// where $v_i$ are the vertices in the path and $w$ is the edge weight.
 pub fn total_distance(path: &[usize], grph: &Graph<String, f64, petgraph::Undirected>) -> f64 {
     let mut dist = 0.0;
     for i in 0..path.len().saturating_sub(1) {

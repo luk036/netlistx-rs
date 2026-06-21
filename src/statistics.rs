@@ -101,6 +101,8 @@ impl NetlistStats {
     }
 
     /// Get the average module degree
+    ///
+    /// $$ \bar{d}_m = \frac{1}{|M|} \sum_{m \in M} \deg(m) $$
     pub fn avg_module_degree(&self) -> f64 {
         self.avg_module_degree
     }
@@ -111,6 +113,8 @@ impl NetlistStats {
     }
 
     /// Get the average net degree
+    ///
+    /// $$ \bar{d}_n = \frac{1}{|N|} \sum_{n \in N} \deg(n) $$
     pub fn avg_net_degree(&self) -> f64 {
         self.avg_net_degree
     }
@@ -121,6 +125,8 @@ impl NetlistStats {
     }
 
     /// Get the pin-to-module ratio
+    ///
+    /// $$ R_{pm} = \frac{\text{pins}}{\text{modules}} $$
     pub fn pin_module_ratio(&self) -> f64 {
         if self.num_modules > 0 {
             self.num_pins as f64 / self.num_modules as f64
@@ -130,6 +136,8 @@ impl NetlistStats {
     }
 
     /// Get the pin-to-net ratio
+    ///
+    /// $$ R_{pn} = \frac{\text{pins}}{\text{nets}} $$
     pub fn pin_net_ratio(&self) -> f64 {
         if self.num_nets > 0 {
             self.num_pins as f64 / self.num_nets as f64

@@ -376,6 +376,13 @@ fn reconstruct_shortest_path(
 
 /// Minimum weight perfect matching on a complete graph via DP over subsets.
 ///
+/// Uses the DP recurrence:
+///
+/// $$ dp\[S\] = \min_{i,j \notin S} \bigl( dp\[S \cup \{i,j\}\] + dist\[i\]\[j\] \bigr) $$
+///
+/// where $S$ is a subset of vertices and $dp\[S\]$ is the minimum cost to match
+/// the remaining vertices not in $S$.
+///
 /// `dist[i][j]` is the distance between vertices i and j.
 /// n is the number of vertices (must be even).
 /// Returns a vector of matched pairs (i, j) with i < j.

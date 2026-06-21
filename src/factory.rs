@@ -8,6 +8,12 @@ use crate::netlist::{Netlist, NetlistBuilder};
 
 /// Van der Corput sequence (base 2 by default).
 ///
+/// Generates the $n$-th term of the van der Corput sequence in the given base:
+///
+/// $$ \phi_b(n) = \sum_{k=0}^{m} \frac{d_k}{b^{k+1}} $$
+///
+/// where $n = \sum_{k=0}^{m} d_k b^k$ is the base-$b$ representation of $n$.
+///
 /// Ported from Python `vdc()` in `netlist.py`.
 pub fn vdc(n: u32, base: u32) -> f64 {
     let mut n = n;
@@ -23,6 +29,9 @@ pub fn vdc(n: u32, base: u32) -> f64 {
 }
 
 /// Generate van der Corput sequence of length `n`.
+///
+/// Returns $\[\\phi_b(0), \\phi_b(1), \\ldots, \\phi_b(n-1)\]$ where
+/// $\\phi_b$ is the van der Corput function.
 ///
 /// Ported from Python `vdcorput()` in `netlist.py`.
 pub fn vdcorput(n: u32, base: u32) -> Vec<f64> {
