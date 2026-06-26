@@ -5,6 +5,10 @@ use crate::netlist::Netlist;
 
 /// Minimum weighted vertex cover for netlist hypergraphs using primal-dual paradigm.
 ///
+/// For a hypergraph $H = (V, E)$ with vertex weights $w: V \to \mathbb{R}^+$,
+/// finds a cover $C \subseteq V$ minimizing $\sum_{v \in C} w(v)$ such that
+/// every hyperedge $e \in E$ has at least one endpoint in $C$.
+///
 /// Iterates over all nets, selecting the module with minimum gap (modified weight)
 /// to cover each uncovered net.
 ///
@@ -58,6 +62,9 @@ where
 }
 
 /// Minimum weighted maximal matching for netlist hypergraphs.
+///
+/// Finds a maximal matching $M \subseteq E$ minimizing $\sum_{e \in M} w(e)$
+/// such that no two matched hyperedges share a common vertex.
 ///
 /// Implements a primal-dual approximation algorithm. Selects nets greedily
 /// avoiding conflicts (shared vertices), maintaining a dependency set.

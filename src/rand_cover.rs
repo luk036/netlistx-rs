@@ -7,8 +7,12 @@ use crate::netlist::Netlist;
 
 /// Single trial of Pitt's randomized hypergraph vertex cover.
 ///
-/// For each uncovered net, selects one endpoint with probability inversely
-/// proportional to its weight. Then applies reverse-delete post-processing.
+/// For each uncovered net, selects one endpoint $v$ with probability
+/// inversely proportional to its weight:
+///
+/// $$ P(v) = \frac{1/w(v)}{\sum_{u \in e} 1/w(u)} $$
+///
+/// Then applies reverse-delete post-processing.
 ///
 /// Ported from C++ `rand_hyper_vertex_cover_trial()` in `rand_cover.hpp`.
 pub fn rand_hyper_vertex_cover_trial<W, R>(
@@ -163,9 +167,10 @@ where
 
 /// Pitt's randomized algorithm for minimum weighted vertex cover on a regular graph.
 ///
-/// For each uncovered edge (u, v), selects u with probability w(v)/(w(u)+w(v))
-/// and v with probability w(u)/(w(u)+w(v)). Then applies reverse-delete
-/// post-processing to remove redundant vertices.
+/// For each uncovered edge $(u, v)$, selects $u$ with probability
+/// $\frac{w(v)}{w(u)+w(v)}$ and $v$ with probability $\frac{w(u)}{w(u)+w(v)}$.
+///
+/// Then applies reverse-delete post-processing to remove redundant vertices.
 ///
 /// Ported from Python `rand_vertex_cover()` in `rand_cover.py`.
 pub fn rand_vertex_cover_trial<W, R>(
