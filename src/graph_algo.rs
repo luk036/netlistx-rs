@@ -11,6 +11,9 @@ use std::ops::Sub;
 
 /// Minimum weighted vertex cover using primal-dual approximation (no post-processing).
 ///
+/// Finds a vertex cover $C \subseteq V$ minimizing $\sum_{v \in C} w(v)$ such that
+/// every edge $(u,v) \in E$ has at least one endpoint in $C$.
+///
 /// For each uncovered edge, swaps so that vtx has the smaller gap, then adds vtx
 /// to the cover. Updates `gap[utx] -= gap[vtx]` and sets `gap[vtx] = 0`.
 ///
@@ -57,9 +60,11 @@ where
 
 /// Minimum weighted maximal independent set using primal-dual approximation.
 ///
-/// Finds a maximal set of vertices with no edges between them (independent set),
-/// minimizing total weight. The algorithm is maximal (no vertex can be added
-/// without breaking independence).
+/// Finds a maximal independent set $I \subseteq V$ minimizing $\sum_{v \in I} w(v)$
+/// such that no two vertices in $I$ share an edge and no vertex can be added to $I$
+/// without violating independence.
+///
+/// The algorithm is maximal (no vertex can be added without breaking independence).
 ///
 /// Ported from Python `min_maximal_independant_set()` in `graph_algo.py`.
 pub fn min_maximal_independent_set<W>(

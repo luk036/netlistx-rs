@@ -5,6 +5,12 @@ use crate::netlist::Netlist;
 
 /// Primal-dual approximation algorithm for covering problems.
 ///
+/// Implements the primal-dual paradigm for set cover:
+///
+/// $$ \min \sum_{v \in C} w(v) \quad \text{s.t.} \quad C \cap S \neq \varnothing \; \forall S \in \mathcal{V} $$
+///
+/// where $\mathcal{V}$ is the set of violating sets and $w(v)$ are vertex weights.
+///
 /// Generic framework that works with any violate function that produces
 /// sets of vertices, a weight function for vertices, and a solution set.
 /// The `coverset` parameter is the current set of covered vertices used

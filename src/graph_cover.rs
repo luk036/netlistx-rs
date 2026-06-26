@@ -14,6 +14,13 @@ use std::ops::Sub;
 
 /// Generic primal-dual approximation algorithm with reverse-delete post-processing.
 ///
+/// Solves the weighted set cover problem via primal-dual:
+///
+/// $$ \min \sum_{v \in C} w(v) \quad \text{s.t.} \quad C \cap S \neq \varnothing \; \forall S \in \mathcal{V} $$
+///
+/// where $\mathcal{V}$ is the set of violating sets. The dual variables (gaps) are
+/// increased uniformly for each element until a constraint becomes tight.
+///
 /// `violate` is a closure that takes the current solution set and returns violating
 /// sets (each element in a violating set must have at least one element added to cover).
 /// After all violations are resolved, redundant elements are removed via reverse-delete.
@@ -87,8 +94,8 @@ where
 
 /// Minimum weighted vertex cover for a graph using primal-dual with reverse-delete.
 ///
-/// A vertex cover is a set of vertices where every edge has at least one endpoint
-/// in the set.
+/// A vertex cover is a set $C \subseteq V$ such that every edge $(u,v) \in E$
+/// has at least one endpoint in $C$. Minimizes $\sum_{v \in C} w(v)$.
 ///
 /// Ported from Python `min_vertex_cover()` in `cover.py`.
 pub fn min_vertex_cover<W>(
@@ -247,8 +254,8 @@ fn generic_bfs_cycle(
 
 /// Minimum weighted set of vertices covering all cycles.
 ///
-/// A cycle cover is a set of vertices such that removing them from the graph
-/// eliminates all cycles (i.e., the remaining graph is a forest).
+/// A cycle cover (feedback vertex set) is a set $C \subseteq V$ such that
+/// $G[V \setminus C]$ is acyclic (a forest). Minimizes $\sum_{v \in C} w(v)$.
 ///
 /// Ported from Python `min_cycle_cover()` in `cover.py`.
 pub fn min_cycle_cover<W>(
@@ -275,8 +282,8 @@ where
 
 /// Minimum weighted set of vertices covering all odd cycles.
 ///
-/// An odd cycle cover is a set of vertices such that removing them from the
-/// graph eliminates all odd-length cycles (making the graph bipartite).
+/// An odd cycle cover is a set $C \subseteq V$ such that $G[V \setminus C]$
+/// contains no odd cycles (i.e., the remaining graph is bipartite).
 ///
 /// Ported from Python `min_odd_cycle_cover()` in `cover.py`.
 pub fn min_odd_cycle_cover<W>(
