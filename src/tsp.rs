@@ -15,6 +15,10 @@ pub fn solve_christofides_2opt_tsp(grph: &Graph<String, f64, petgraph::Undirecte
 
 /// Christofides 3/2-approximation algorithm for Metric TSP.
 ///
+/// Finds a Hamiltonian cycle with total weight at most $\frac{3}{2}$ times optimal:
+///
+/// $$ OPT \le \text{cost}(T) \le \frac{3}{2} \cdot OPT $$
+///
 /// 1. MST of the graph
 /// 2. Odd-degree vertices in MST
 /// 3. Minimum weight perfect matching on odd vertices
@@ -129,7 +133,10 @@ fn mst(grph: &Graph<String, f64, petgraph::Undirected>) -> Vec<(usize, usize)> {
 }
 
 /// Minimum weight perfect matching on a complete subgraph (odd vertices).
-/// Uses DP over subsets (O(k * 2^k) for k odd vertices).
+///
+/// $$ \min_{M} \sum_{\{i,j\} \in M} d_{ij}, \quad \text{every vertex appears in exactly one pair} $$
+///
+/// Uses DP over subsets ($O(k \cdot 2^k)$ for $k$ odd vertices).
 fn min_weight_perfect_matching_edge(
     grph: &Graph<String, f64, petgraph::Undirected>,
     odd_nodes: &[usize],
@@ -341,6 +348,9 @@ pub fn total_distance(path: &[usize], grph: &Graph<String, f64, petgraph::Undire
 }
 
 /// Create a complete graph with random Euclidean (L2) edge weights.
+///
+/// $$ d_{ij} = \sqrt{(x_i - x_j)^2 + (y_i - y_j)^2} $$
+///
 pub fn make_l2_graph(
     n: usize,
     seed: u64,
@@ -366,6 +376,9 @@ pub fn make_l2_graph(
 }
 
 /// Create a complete graph with random Manhattan (L1) edge weights.
+///
+/// $$ d_{ij} = |x_i - x_j| + |y_i - y_j| $$
+///
 pub fn make_l1_graph(
     n: usize,
     seed: u64,

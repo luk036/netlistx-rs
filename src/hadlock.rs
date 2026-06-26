@@ -6,6 +6,11 @@ use std::collections::VecDeque;
 
 /// Solve MAX-CUT for a planar graph using Hadlock's algorithm.
 ///
+/// Given a graph $G = (V, E)$ with edge weights $w: E \to \mathbb{R}^+$,
+/// find a partition $(S, V \setminus S)$ maximizing the total weight of cut edges:
+///
+/// $$ \max_{S \subseteq V} \sum_{\substack{(u,v) \in E \\ u \in S, v \notin S}} w(u,v) $$
+///
 /// The graph is first decomposed into biconnected components, each of which
 /// is solved independently. The final cut is the union of per-component cuts.
 ///
