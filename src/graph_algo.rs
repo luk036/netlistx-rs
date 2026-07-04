@@ -26,7 +26,7 @@ pub fn min_vertex_cover_fast<W>(
 where
     W: Copy + Add<Output = W> + Sub<Output = W> + PartialOrd + Default,
 {
-    let mut gap: HashMap<String, W> = weight.clone();
+    let mut gap: HashMap<String, W> = HashMap::new();
     let mut total_dual_cost: W = W::default();
     let mut total_primal_cost: W = W::default();
 
@@ -49,9 +49,8 @@ where
         coverset.insert(v.clone());
         total_dual_cost = total_dual_cost + gv;
         total_primal_cost = total_primal_cost + *weight.get(v).unwrap_or(&W::default());
-        if let Some(g) = gap.get_mut(u) {
-            *g = *g - gv;
-        }
+        let g = gap.entry(u.clone()).or_insert(weight[u]);
+        *g = *g - gv;
         gap.insert(v.clone(), W::default());
     }
 
@@ -76,7 +75,7 @@ pub fn min_maximal_independent_set<W>(
 where
     W: Copy + Add<Output = W> + Sub<Output = W> + PartialOrd + Default,
 {
-    let mut gap: HashMap<String, W> = weight.clone();
+    let mut gap: HashMap<String, W> = HashMap::new();
     let mut total_primal_cost: W = W::default();
     let mut total_dual_cost: W = W::default();
 
@@ -120,9 +119,8 @@ where
         }
         for neighbor_idx in grph.neighbors(node_idx) {
             let v = &grph[neighbor_idx];
-            if let Some(g) = gap.get_mut(v) {
-                *g = *g - min_val;
-            }
+            let g = gap.entry(v.clone()).or_insert(weight[v]);
+            *g = *g - min_val;
         }
     }
 

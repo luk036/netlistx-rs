@@ -41,10 +41,10 @@ pub struct Netlist {
     pub modules: IndexSet<String>,
     /// List of net names
     pub nets: IndexSet<String>,
-    /// Module to node index mapping for O(1) lookups
-    module_indices: IndexMap<String, NodeIndex>,
-    /// Net to node index mapping for O(1) lookups
-    net_indices: IndexMap<String, NodeIndex>,
+    /// Petgraph node indices for each module (parallel to `modules` order)
+    module_nodes: Vec<NodeIndex>,
+    /// Petgraph node indices for each net (parallel to `nets` order)
+    net_nodes: Vec<NodeIndex>,
     /// Optional net weights
     pub net_weight: Option<IndexMap<String, i32>>,
     /// Optional module weights
@@ -78,8 +78,8 @@ impl Netlist {
             grph: petgraph::Graph::new_undirected(),
             modules: IndexSet::new(),
             nets: IndexSet::new(),
-            module_indices: IndexMap::new(),
-            net_indices: IndexMap::new(),
+            module_nodes: Vec::new(),
+            net_nodes: Vec::new(),
             net_weight: None,
             module_weight: None,
             module_fixed: HashSet::new(),
@@ -125,7 +125,7 @@ impl Netlist {
 
         let node_index = self.grph.add_node(module.clone());
         self.modules.insert(module.clone());
-        self.module_indices.insert(module, node_index);
+        self.module_nodes.push(node_index);
 
         Ok(())
     }
@@ -156,7 +156,7 @@ impl Netlist {
 
         let node_index = self.grph.add_node(net.clone());
         self.nets.insert(net.clone());
-        self.net_indices.insert(net, node_index);
+        self.net_nodes.push(node_index);
 
         Ok(())
     }
@@ -180,18 +180,20 @@ impl Netlist {
     /// ```
     pub fn add_edge(&mut self, net: &str, module: &str) -> NetlistResult<()> {
         let net_index = self
-            .net_indices
-            .get(net)
+            .nets
+            .get_index_of(net)
+            .and_then(|i| self.net_nodes.get(i).copied())
             .ok_or_else(|| NetlistError::NetNotFound(net.to_string()))?;
         let module_index = self
-            .module_indices
-            .get(module)
+            .modules
+            .get_index_of(module)
+            .and_then(|i| self.module_nodes.get(i).copied())
             .ok_or_else(|| NetlistError::ModuleNotFound(module.to_string()))?;
 
         // Avoid duplicate edges (same behavior as networkx.Graph.add_edge)
-        if self.grph.find_edge(*net_index, *module_index).is_none() {
-            self.grph.add_edge(*net_index, *module_index, ());
-            self.invalidate_cache();
+        if self.grph.find_edge(net_index, module_index).is_none() {
+            self.grph.add_edge(net_index, module_index, ());
+            self.invalidate_cache(module, net);
         }
 
         Ok(())
@@ -216,11 +218,11 @@ impl Netlist {
     /// assert_eq!(netlist.get_module_degree("m1"), 1);
     /// ```
     pub fn get_module_degree(&self, module: &str) -> usize {
-        if let Some(&node_index) = self.module_indices.get(module) {
-            self.grph.neighbors(node_index).count()
-        } else {
-            0
-        }
+        self.modules
+            .get_index_of(module)
+            .and_then(|i| self.module_nodes.get(i))
+            .map(|&node_index| self.grph.neighbors(node_index).count())
+            .unwrap_or(0)
     }
 
     /// Gets the degree (number of connected modules) of a net.
@@ -239,11 +241,11 @@ impl Netlist {
     /// assert_eq!(netlist.get_net_degree("n1"), 2);
     /// ```
     pub fn get_net_degree(&self, net: &str) -> usize {
-        if let Some(&node_index) = self.net_indices.get(net) {
-            self.grph.neighbors(node_index).count()
-        } else {
-            0
-        }
+        self.nets
+            .get_index_of(net)
+            .and_then(|i| self.net_nodes.get(i))
+            .map(|&node_index| self.grph.neighbors(node_index).count())
+            .unwrap_or(0)
     }
 
     /// Checks if a module exists in the netlist
@@ -259,7 +261,11 @@ impl Netlist {
     /// Gets all modules connected to a net
     pub fn get_net_modules(&self, net: &str) -> Vec<String> {
         let mut modules = Vec::new();
-        if let Some(&net_index) = self.net_indices.get(net) {
+        if let Some(&net_index) = self
+            .nets
+            .get_index_of(net)
+            .and_then(|i| self.net_nodes.get(i))
+        {
             for neighbor_index in self.grph.neighbors(net_index) {
                 let neighbor_name = &self.grph[neighbor_index];
                 if self.modules.contains(neighbor_name) {
@@ -273,7 +279,11 @@ impl Netlist {
     /// Gets all nets connected to a module
     pub fn get_module_nets(&self, module: &str) -> Vec<String> {
         let mut nets = Vec::new();
-        if let Some(&module_index) = self.module_indices.get(module) {
+        if let Some(&module_index) = self
+            .modules
+            .get_index_of(module)
+            .and_then(|i| self.module_nodes.get(i))
+        {
             for neighbor_index in self.grph.neighbors(module_index) {
                 let neighbor_name = &self.grph[neighbor_index];
                 if self.nets.contains(neighbor_name) {
@@ -314,22 +324,16 @@ impl Netlist {
         1
     }
 
-    /// Invalidates cached values (e.g., after adding edges)
-    fn invalidate_cache(&mut self) {
-        // Recompute max degrees
-        self.max_degree = self
-            .modules
-            .iter()
-            .map(|m| self.get_module_degree(m) as u32)
-            .max()
-            .unwrap_or(0);
-
-        self.max_net_degree = self
-            .nets
-            .iter()
-            .map(|n| self.get_net_degree(n) as u32)
-            .max()
-            .unwrap_or(0);
+    /// Update cached max degrees after adding an edge.
+    fn invalidate_cache(&mut self, module: &str, net: &str) {
+        let mod_deg = self.get_module_degree(module) as u32;
+        let net_deg = self.get_net_degree(net) as u32;
+        if mod_deg > self.max_degree {
+            self.max_degree = mod_deg;
+        }
+        if net_deg > self.max_net_degree {
+            self.max_net_degree = net_deg;
+        }
     }
 }
 

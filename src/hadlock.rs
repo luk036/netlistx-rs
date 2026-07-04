@@ -233,23 +233,13 @@ fn find_faces(grph: &Graph<String, f64, petgraph::Undirected>) -> Vec<Vec<String
         }
     }
 
-    // Deduplicate faces
+    // Deduplicate faces via sorted canonical form
+    let mut seen: HashSet<Vec<String>> = HashSet::new();
     let mut unique_faces: Vec<Vec<String>> = Vec::new();
     for face in faces {
-        let mut is_dup = false;
-        for existing in &unique_faces {
-            if face.len() == existing.len() {
-                let mut f_sorted = face.clone();
-                f_sorted.sort();
-                let mut e_sorted = existing.clone();
-                e_sorted.sort();
-                if f_sorted == e_sorted {
-                    is_dup = true;
-                    break;
-                }
-            }
-        }
-        if !is_dup {
+        let mut canon: Vec<String> = face.clone();
+        canon.sort();
+        if seen.insert(canon) {
             unique_faces.push(face);
         }
     }

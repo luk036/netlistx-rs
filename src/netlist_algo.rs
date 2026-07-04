@@ -25,7 +25,7 @@ where
         + std::cmp::PartialOrd
         + Default,
 {
-    let mut gap: HashMap<String, W> = weight.clone();
+    let mut gap: HashMap<String, W> = HashMap::new();
     let mut total_dual_cost: W = W::default();
     let mut total_primal_cost: W = W::default();
 
@@ -46,15 +46,14 @@ where
             .cloned()
             .expect("net with no modules should not happen");
 
-        let min_val = gap[&min_vtx];
+        let min_val = gap.get(&min_vtx).copied().unwrap_or(weight[&min_vtx]);
         coverset.insert(min_vtx.clone());
         total_primal_cost = total_primal_cost + weight[&min_vtx];
         total_dual_cost = total_dual_cost + min_val;
 
         for vtx in &modules {
-            if let Some(g) = gap.get_mut(vtx) {
-                *g = *g - min_val;
-            }
+            let g = gap.entry(vtx.clone()).or_insert(weight[vtx]);
+            *g = *g - min_val;
         }
     }
 
@@ -83,7 +82,7 @@ where
         + std::cmp::PartialOrd
         + Default,
 {
-    let mut gap: HashMap<String, W> = weight.clone();
+    let mut gap: HashMap<String, W> = HashMap::new();
     let mut total_dual_cost: W = W::default();
     let mut total_primal_cost: W = W::default();
 
@@ -100,13 +99,14 @@ where
             continue;
         }
 
-        let mut min_val = gap[net];
+        let mut min_val = gap.get(net).copied().unwrap_or(weight[net]);
         let mut min_net = net.clone();
 
         for m in &modules_in_net {
             for net2 in &netlist.get_module_nets(m) {
-                if !dep.contains(net2) && gap.contains_key(net2) && gap[net2] < min_val {
-                    min_val = gap[net2];
+                let g_val = gap.get(net2).copied().unwrap_or(weight[net2]);
+                if !dep.contains(net2) && g_val < min_val {
+                    min_val = g_val;
                     min_net = net2.clone();
                 }
             }
@@ -118,14 +118,12 @@ where
         total_dual_cost = total_dual_cost + min_val;
 
         if &min_net != net {
-            if let Some(g) = gap.get_mut(net) {
-                *g = *g - min_val;
-            }
+            let g = gap.entry(net.clone()).or_insert(weight[net]);
+            *g = *g - min_val;
             for m in &modules_in_net {
                 for net2 in &netlist.get_module_nets(m) {
-                    if let Some(g) = gap.get_mut(net2) {
-                        *g = *g - min_val;
-                    }
+                    let g = gap.entry(net2.clone()).or_insert(weight[net2]);
+                    *g = *g - min_val;
                 }
             }
         }

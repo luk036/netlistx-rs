@@ -33,7 +33,7 @@ where
     F: FnMut(&HashSet<String>) -> Vec<Vec<String>>,
     W: Copy + Add<Output = W> + Sub<Output = W> + PartialOrd + Default,
 {
-    let mut gap: HashMap<String, W> = weight.clone();
+    let mut gap: HashMap<String, W> = HashMap::new();
     let mut added_order: Vec<String> = Vec::new();
     let mut total_dual_cost: W = W::default();
 
@@ -197,6 +197,8 @@ fn generic_bfs_cycle(
 ) -> Vec<Vec<String>> {
     let mut cycles: Vec<Vec<String>> = Vec::new();
     let mut visited: HashSet<String> = HashSet::new();
+    let mut parent: HashMap<String, Option<String>> = HashMap::new();
+    let mut depth: HashMap<String, usize> = HashMap::new();
 
     for node_idx in grph.node_indices() {
         let source = &grph[node_idx];
@@ -204,9 +206,8 @@ fn generic_bfs_cycle(
             continue;
         }
 
-        // BFS
-        let mut parent: HashMap<String, Option<String>> = HashMap::new();
-        let mut depth: HashMap<String, usize> = HashMap::new();
+        parent.clear();
+        depth.clear();
         let mut queue: VecDeque<String> = VecDeque::new();
 
         parent.insert(source.clone(), None);
