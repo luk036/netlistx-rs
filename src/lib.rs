@@ -24,7 +24,8 @@ pub use graph_cover::{
 };
 pub use hadlock::solve_hadlock_max_cut;
 pub use io::{
-    read_netlist, read_node_link_json, read_yosys_json, write_netlist, InputFormat, OutputFormat,
+    read_netlist, read_node_link_json, read_yosys_json, read_yosys_json_sax, write_netlist,
+    InputFormat, OutputFormat,
 };
 pub use netlist::{Netlist, NetlistBuilder, NetlistError, Snapshot};
 pub use netlist_algo::min_maximal_matching;

@@ -1,7 +1,11 @@
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 use std::fs::File;
 use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
+
+use indexmap::IndexMap;
+use serde::de::{DeserializeSeed, Deserializer, IgnoredAny, MapAccess, SeqAccess, Visitor};
+use serde_json::Deserializer as JsonDeserializer;
 
 use crate::netlist::Netlist;
 
@@ -551,6 +555,705 @@ pub fn read_yosys_json<P: AsRef<Path>>(path: P) -> IoResult<Netlist> {
     Ok(netlist)
 }
 
+// ═══════════════════════════════════════════════════════════════════
+//  SAX-style streaming JSON parser for Yosys netlist files
+// ═══════════════════════════════════════════════════════════════════
+//
+// Each JSON nesting level is handled by a dedicated "seed" type that
+// implements DeserializeSeed.  Seeds thread a &mut YosysSaxData through
+// the recursive-descent parse tree — the Rust/serde analogue of nlohmann
+// SAX event handlers.
+
+/// Collected data from streaming parse; avoids building the full DOM tree.
+#[derive(Default)]
+struct YosysSaxData {
+    cell_names: Vec<String>,
+    all_net_ids: BTreeSet<u32>,
+    port_names: Vec<String>,
+    port_bits: IndexMap<String, Vec<u32>>,
+    cell_edges: Vec<(usize, u32)>,
+}
+
+struct TopSeed<'a> {
+    data: &'a mut YosysSaxData,
+}
+struct ModulesSeed<'a> {
+    data: &'a mut YosysSaxData,
+}
+struct ModuleSeed<'a> {
+    data: &'a mut YosysSaxData,
+}
+struct CellsSeed<'a> {
+    data: &'a mut YosysSaxData,
+}
+struct CellSeed<'a> {
+    data: &'a mut YosysSaxData,
+    cell_idx: usize,
+}
+struct ConnectionsSeed<'a> {
+    data: &'a mut YosysSaxData,
+    cell_idx: usize,
+}
+struct PortsSeed<'a> {
+    data: &'a mut YosysSaxData,
+}
+struct PortSeed<'a> {
+    data: &'a mut YosysSaxData,
+    port_name: String,
+}
+struct NetnamesSeed<'a> {
+    data: &'a mut YosysSaxData,
+}
+
+impl<'de, 'a> DeserializeSeed<'de> for TopSeed<'a> {
+    type Value = ();
+
+    fn deserialize<D>(self, deserializer: D) -> Result<<Self as DeserializeSeed<'de>>::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct TopVisitor<'a> {
+            data: &'a mut YosysSaxData,
+        }
+
+        impl<'de, 'a> Visitor<'de> for TopVisitor<'a> {
+            type Value = ();
+
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("a Yosys JSON object with 'modules' key")
+            }
+
+            fn visit_map<A>(self, mut map: A) -> Result<(), A::Error>
+            where
+                A: MapAccess<'de>,
+            {
+                while let Some(key) = map.next_key::<String>()? {
+                    match key.as_str() {
+                        "modules" => {
+                            map.next_value_seed(ModulesSeed { data: self.data })?;
+                        }
+                        _ => {
+                            map.next_value::<IgnoredAny>()?;
+                        }
+                    }
+                }
+                Ok(())
+            }
+        }
+
+        deserializer.deserialize_any(TopVisitor { data: self.data })
+    }
+}
+
+impl<'de, 'a> DeserializeSeed<'de> for ModulesSeed<'a> {
+    type Value = ();
+
+    fn deserialize<D>(self, deserializer: D) -> Result<<Self as DeserializeSeed<'de>>::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct ModulesVisitor<'a> {
+            data: &'a mut YosysSaxData,
+        }
+
+        impl<'de, 'a> Visitor<'de> for ModulesVisitor<'a> {
+            type Value = ();
+
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("a 'modules' object")
+            }
+
+            fn visit_map<A>(self, mut map: A) -> Result<(), A::Error>
+            where
+                A: MapAccess<'de>,
+            {
+                if let Some(_mod_name) = map.next_key::<String>()? {
+                    map.next_value_seed(ModuleSeed { data: self.data })?;
+                }
+                Ok(())
+            }
+        }
+
+        deserializer.deserialize_any(ModulesVisitor { data: self.data })
+    }
+}
+
+impl<'de, 'a> DeserializeSeed<'de> for ModuleSeed<'a> {
+    type Value = ();
+
+    fn deserialize<D>(self, deserializer: D) -> Result<<Self as DeserializeSeed<'de>>::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct ModuleVisitor<'a> {
+            data: &'a mut YosysSaxData,
+        }
+
+        impl<'de, 'a> Visitor<'de> for ModuleVisitor<'a> {
+            type Value = ();
+
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("a module object")
+            }
+
+            fn visit_map<A>(self, mut map: A) -> Result<(), A::Error>
+            where
+                A: MapAccess<'de>,
+            {
+                while let Some(key) = map.next_key::<String>()? {
+                    match key.as_str() {
+                        "cells" => {
+                            map.next_value_seed(CellsSeed { data: self.data })?;
+                        }
+                        "ports" => {
+                            map.next_value_seed(PortsSeed { data: self.data })?;
+                        }
+                        "netnames" => {
+                            map.next_value_seed(NetnamesSeed { data: self.data })?;
+                        }
+                        _ => {
+                            map.next_value::<IgnoredAny>()?;
+                        }
+                    }
+                }
+                Ok(())
+            }
+        }
+
+        deserializer.deserialize_any(ModuleVisitor { data: self.data })
+    }
+}
+
+impl<'de, 'a> DeserializeSeed<'de> for CellsSeed<'a> {
+    type Value = ();
+
+    fn deserialize<D>(self, deserializer: D) -> Result<<Self as DeserializeSeed<'de>>::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct CellsVisitor<'a> {
+            data: &'a mut YosysSaxData,
+        }
+
+        impl<'de, 'a> Visitor<'de> for CellsVisitor<'a> {
+            type Value = ();
+
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("a 'cells' object")
+            }
+
+            fn visit_map<A>(self, mut map: A) -> Result<(), A::Error>
+            where
+                A: MapAccess<'de>,
+            {
+                while let Some(cell_name) = map.next_key::<String>()? {
+                    let cell_idx = self.data.cell_names.len();
+                    self.data.cell_names.push(cell_name);
+                    map.next_value_seed(CellSeed {
+                        data: self.data,
+                        cell_idx,
+                    })?;
+                }
+                Ok(())
+            }
+        }
+
+        deserializer.deserialize_any(CellsVisitor { data: self.data })
+    }
+}
+
+impl<'de, 'a> DeserializeSeed<'de> for CellSeed<'a> {
+    type Value = ();
+
+    fn deserialize<D>(self, deserializer: D) -> Result<<Self as DeserializeSeed<'de>>::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct CellVisitor<'a> {
+            data: &'a mut YosysSaxData,
+            cell_idx: usize,
+        }
+
+        impl<'de, 'a> Visitor<'de> for CellVisitor<'a> {
+            type Value = ();
+
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("a cell object")
+            }
+
+            fn visit_map<A>(self, mut map: A) -> Result<(), A::Error>
+            where
+                A: MapAccess<'de>,
+            {
+                while let Some(key) = map.next_key::<String>()? {
+                    match key.as_str() {
+                        "connections" => {
+                            map.next_value_seed(ConnectionsSeed {
+                                data: self.data,
+                                cell_idx: self.cell_idx,
+                            })?;
+                        }
+                        _ => {
+                            map.next_value::<IgnoredAny>()?;
+                        }
+                    }
+                }
+                Ok(())
+            }
+        }
+
+        deserializer.deserialize_any(CellVisitor {
+            data: self.data,
+            cell_idx: self.cell_idx,
+        })
+    }
+}
+
+impl<'de, 'a> DeserializeSeed<'de> for ConnectionsSeed<'a> {
+    type Value = ();
+
+    fn deserialize<D>(self, deserializer: D) -> Result<<Self as DeserializeSeed<'de>>::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct ConnectionsVisitor<'a> {
+            data: &'a mut YosysSaxData,
+            cell_idx: usize,
+        }
+
+        impl<'de, 'a> Visitor<'de> for ConnectionsVisitor<'a> {
+            type Value = ();
+
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("a 'connections' object")
+            }
+
+            fn visit_map<A>(self, mut map: A) -> Result<(), A::Error>
+            where
+                A: MapAccess<'de>,
+            {
+                while let Some(_port) = map.next_key::<String>()? {
+                    struct ConnArraySeed<'a> {
+                        data: &'a mut YosysSaxData,
+                        cell_idx: usize,
+                    }
+
+                    impl<'de, 'a> DeserializeSeed<'de> for ConnArraySeed<'a> {
+                        type Value = ();
+
+                        fn deserialize<D>(self, deserializer: D) -> Result<<Self as DeserializeSeed<'de>>::Value, D::Error>
+                        where
+                            D: Deserializer<'de>,
+                        {
+                            struct ConnArrayVisitor<'a> {
+                                data: &'a mut YosysSaxData,
+                                cell_idx: usize,
+                            }
+
+                            impl<'de, 'a> Visitor<'de> for ConnArrayVisitor<'a> {
+                                type Value = ();
+
+                                fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                                    f.write_str("array of net IDs")
+                                }
+
+                                fn visit_seq<A>(self, mut seq: A) -> Result<(), A::Error>
+                                where
+                                    A: SeqAccess<'de>,
+                                {
+                                    while let Some(elem) = seq.next_element::<serde_json::Value>()? {
+                                        if let Some(n) = elem.as_u64() {
+                                            let n = n as u32;
+                                            self.data.all_net_ids.insert(n);
+                                            self.data.cell_edges.push((self.cell_idx, n));
+                                        }
+                                    }
+                                    Ok(())
+                                }
+                            }
+
+                            deserializer.deserialize_any(ConnArrayVisitor {
+                                data: self.data,
+                                cell_idx: self.cell_idx,
+                            })
+                        }
+                    }
+
+                    map.next_value_seed(ConnArraySeed {
+                        data: self.data,
+                        cell_idx: self.cell_idx,
+                    })?;
+                }
+                Ok(())
+            }
+        }
+
+        deserializer.deserialize_any(ConnectionsVisitor {
+            data: self.data,
+            cell_idx: self.cell_idx,
+        })
+    }
+}
+
+impl<'de, 'a> DeserializeSeed<'de> for PortsSeed<'a> {
+    type Value = ();
+
+    fn deserialize<D>(self, deserializer: D) -> Result<<Self as DeserializeSeed<'de>>::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct PortsVisitor<'a> {
+            data: &'a mut YosysSaxData,
+        }
+
+        impl<'de, 'a> Visitor<'de> for PortsVisitor<'a> {
+            type Value = ();
+
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("a 'ports' object")
+            }
+
+            fn visit_map<A>(self, mut map: A) -> Result<(), A::Error>
+            where
+                A: MapAccess<'de>,
+            {
+                while let Some(port_name) = map.next_key::<String>()? {
+                    self.data.port_names.push(port_name.clone());
+                    map.next_value_seed(PortSeed {
+                        data: self.data,
+                        port_name,
+                    })?;
+                }
+                Ok(())
+            }
+        }
+
+        deserializer.deserialize_any(PortsVisitor { data: self.data })
+    }
+}
+
+impl<'de, 'a> DeserializeSeed<'de> for PortSeed<'a> {
+    type Value = ();
+
+    fn deserialize<D>(self, deserializer: D) -> Result<<Self as DeserializeSeed<'de>>::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct PortVisitor<'a> {
+            data: &'a mut YosysSaxData,
+            port_name: String,
+        }
+
+        impl<'de, 'a> Visitor<'de> for PortVisitor<'a> {
+            type Value = ();
+
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("a port object")
+            }
+
+            fn visit_map<A>(self, mut map: A) -> Result<(), A::Error>
+            where
+                A: MapAccess<'de>,
+            {
+                while let Some(key) = map.next_key::<String>()? {
+                    if key == "bits" {
+                        struct PortBitsSeed<'a> {
+                            data: &'a mut YosysSaxData,
+                            port_name: String,
+                        }
+
+                        impl<'de, 'a> DeserializeSeed<'de> for PortBitsSeed<'a> {
+                            type Value = ();
+
+                            fn deserialize<D>(self, deserializer: D) -> Result<<Self as DeserializeSeed<'de>>::Value, D::Error>
+                            where
+                                D: Deserializer<'de>,
+                            {
+                                struct PortBitsVisitor<'a> {
+                                    data: &'a mut YosysSaxData,
+                                    port_name: String,
+                                }
+
+                                impl<'de, 'a> Visitor<'de> for PortBitsVisitor<'a> {
+                                    type Value = ();
+
+                                    fn expecting(
+                                        &self,
+                                        f: &mut std::fmt::Formatter,
+                                    ) -> std::fmt::Result {
+                                        f.write_str("array of net IDs")
+                                    }
+
+                                    fn visit_seq<A>(self, mut seq: A) -> Result<(), A::Error>
+                                    where
+                                        A: SeqAccess<'de>,
+                                    {
+                                        let mut bits = Vec::new();
+                                        while let Some(n) = seq.next_element::<u64>()? {
+                                            let n = n as u32;
+                                            bits.push(n);
+                                            self.data.all_net_ids.insert(n);
+                                        }
+                                        self.data
+                                            .port_bits
+                                            .insert(self.port_name.clone(), bits);
+                                        Ok(())
+                                    }
+                                }
+
+                                deserializer.deserialize_any(PortBitsVisitor {
+                                    data: self.data,
+                                    port_name: self.port_name,
+                                })
+                            }
+                        }
+
+                        map.next_value_seed(PortBitsSeed {
+                            data: self.data,
+                            port_name: self.port_name.clone(),
+                        })?;
+                    } else {
+                        map.next_value::<IgnoredAny>()?;
+                    }
+                }
+                Ok(())
+            }
+        }
+
+        deserializer.deserialize_any(PortVisitor {
+            data: self.data,
+            port_name: self.port_name,
+        })
+    }
+}
+
+impl<'de, 'a> DeserializeSeed<'de> for NetnamesSeed<'a> {
+    type Value = ();
+
+    fn deserialize<D>(self, deserializer: D) -> Result<<Self as DeserializeSeed<'de>>::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct NetnamesVisitor<'a> {
+            data: &'a mut YosysSaxData,
+        }
+
+        impl<'de, 'a> Visitor<'de> for NetnamesVisitor<'a> {
+            type Value = ();
+
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("a 'netnames' object")
+            }
+
+            fn visit_map<A>(self, mut map: A) -> Result<(), A::Error>
+            where
+                A: MapAccess<'de>,
+            {
+                while let Some(_net_name) = map.next_key::<String>()? {
+                    struct NetnameEntrySeed<'a> {
+                        data: &'a mut YosysSaxData,
+                    }
+
+                    impl<'de, 'a> DeserializeSeed<'de> for NetnameEntrySeed<'a> {
+                        type Value = ();
+
+                        fn deserialize<D>(self, deserializer: D) -> Result<<Self as DeserializeSeed<'de>>::Value, D::Error>
+                        where
+                            D: Deserializer<'de>,
+                        {
+                            struct NetnameEntryVisitor<'a> {
+                                data: &'a mut YosysSaxData,
+                            }
+
+                            impl<'de, 'a> Visitor<'de> for NetnameEntryVisitor<'a> {
+                                type Value = ();
+
+                                fn expecting(
+                                    &self,
+                                    f: &mut std::fmt::Formatter,
+                                ) -> std::fmt::Result {
+                                    f.write_str("a netname entry object")
+                                }
+
+                                fn visit_map<A>(self, mut map: A) -> Result<(), A::Error>
+                                where
+                                    A: MapAccess<'de>,
+                                {
+                                    while let Some(key) = map.next_key::<String>()? {
+                                        if key == "bits" {
+                                            struct BitsSeed<'a> {
+                                                data: &'a mut YosysSaxData,
+                                            }
+
+                                                impl<'de, 'a> DeserializeSeed<'de> for BitsSeed<'a> {
+                                                type Value = ();
+
+                                                fn deserialize<D>(
+                                                    self,
+                                                    deserializer: D,
+                                                ) -> Result<<Self as DeserializeSeed<'de>>::Value, D::Error>
+                                                where
+                                                    D: Deserializer<'de>,
+                                                {
+                                                    struct BitsVisitor<'a> {
+                                                        data: &'a mut YosysSaxData,
+                                                    }
+
+                                                    impl<'de, 'a> Visitor<'de> for BitsVisitor<'a> {
+                                                        type Value = ();
+
+                                                        fn expecting(
+                                                            &self,
+                                                            f: &mut std::fmt::Formatter,
+                                                        ) -> std::fmt::Result {
+                                                            f.write_str("array of net IDs")
+                                                        }
+
+                                                        fn visit_seq<A>(
+                                                            self,
+                                                            mut seq: A,
+                                                        ) -> Result<(), A::Error>
+                                                        where
+                                                            A: SeqAccess<'de>,
+                                                        {
+                                                            while let Some(n) =
+                                                                seq.next_element::<u64>()?
+                                                            {
+                                                                self.data
+                                                                    .all_net_ids
+                                                                    .insert(n as u32);
+                                                            }
+                                                            Ok(())
+                                                        }
+                                                    }
+
+                                                    deserializer
+                                                        .deserialize_any(BitsVisitor {
+                                                            data: self.data,
+                                                        })
+                                                }
+                                            }
+
+                                            map.next_value_seed(BitsSeed {
+                                                data: self.data,
+                                            })?;
+                                        } else {
+                                            map.next_value::<IgnoredAny>()?;
+                                        }
+                                    }
+                                    Ok(())
+                                }
+                            }
+
+                            deserializer.deserialize_any(NetnameEntryVisitor { data: self.data })
+                        }
+                    }
+
+                    map.next_value_seed(NetnameEntrySeed { data: self.data })?;
+                }
+                Ok(())
+            }
+        }
+
+        deserializer.deserialize_any(NetnamesVisitor { data: self.data })
+    }
+}
+
+/// Read a netlist from a Yosys JSON file using SAX-style streaming parsing.
+///
+/// Processes the JSON as a stream of events without building the full DOM tree.
+/// Only the first module is processed (matching `read_yosys_json` behavior).
+/// More memory-efficient than the DOM version for large files.
+///
+/// # Arguments
+///
+/// * `path` - Path to the Yosys JSON file
+///
+/// # Errors
+///
+/// Returns an error if the file cannot be read, the JSON is malformed, or
+/// required keys ("modules", "cells", "ports") are missing.
+pub fn read_yosys_json_sax<P: AsRef<Path>>(path: P) -> IoResult<Netlist> {
+    let file = File::open(path.as_ref())?;
+    let reader = BufReader::new(file);
+    let mut de = JsonDeserializer::from_reader(reader);
+
+    let mut data = YosysSaxData::default();
+
+    TopSeed { data: &mut data }
+        .deserialize(&mut de)
+        .map_err(IoError::JsonError)?;
+
+    if data.cell_names.is_empty() && data.port_names.is_empty() {
+        return Err(IoError::InvalidFormat("Missing 'modules' key".to_string()));
+    }
+
+    build_netlist_from_sax_data(data)
+}
+
+fn build_netlist_from_sax_data(data: YosysSaxData) -> IoResult<Netlist> {
+    let cell_names = data.cell_names;
+    let port_names = data.port_names;
+    let nets_list: Vec<u32> = data.all_net_ids.into_iter().collect();
+    let num_ports = port_names.len();
+
+    let mut netlist = Netlist::new();
+
+    for cell_name in &cell_names {
+        netlist
+            .add_module(cell_name.clone())
+            .map_err(|e| IoError::InvalidFormat(e.to_string()))?;
+    }
+
+    for port_name in &port_names {
+        netlist
+            .add_module(format!("PORT_{}", port_name))
+            .map_err(|e| IoError::InvalidFormat(e.to_string()))?;
+    }
+
+    for &net_id in &nets_list {
+        netlist
+            .add_net(net_id.to_string())
+            .map_err(|e| IoError::InvalidFormat(e.to_string()))?;
+    }
+
+    for &(cell_idx, net_id) in &data.cell_edges {
+        if nets_list.contains(&net_id) {
+            let net_name = net_id.to_string();
+            let cell_name = &cell_names[cell_idx];
+            let _ = netlist.add_edge(&net_name, cell_name);
+        }
+    }
+
+    for port_name in &port_names {
+        if let Some(bits) = data.port_bits.get(port_name) {
+            for &net_id in bits {
+                if nets_list.contains(&net_id) {
+                    let net_name = net_id.to_string();
+                    let port_mod = format!("PORT_{}", port_name);
+                    let _ = netlist.add_edge(&net_name, &port_mod);
+                }
+            }
+        }
+    }
+
+    netlist.num_pads = num_ports as i32;
+
+    for cell_name in &cell_names {
+        netlist.set_module_weight(cell_name, 1);
+    }
+    for port_name in &port_names {
+        netlist.set_module_weight(&format!("PORT_{}", port_name), 0);
+    }
+
+    for port_name in &port_names {
+        netlist.module_fixed.insert(format!("PORT_{}", port_name));
+    }
+    netlist.has_fixed_modules = num_ports > 0;
+
+    Ok(netlist)
+}
+
 /// Read a netlist from standard node-link JSON format (as written by `write_json`).
 ///
 /// The JSON file must have a "graph" object with "num_modules" and "num_nets",
@@ -1050,6 +1753,181 @@ mod tests {
         use std::io::Write;
         write!(&tmp, "{}", content).unwrap();
         let result = read_yosys_json(tmp.path());
+        assert!(result.is_err());
+    }
+
+    // --- SAX version tests (should match the DOM version) ---
+
+    #[test]
+    fn test_yosys_sax_simple_and_gate() {
+        let cells = serde_json::json!({
+            "and1": {
+                "type": "$and",
+                "connections": {
+                    "A": [0],
+                    "B": [1],
+                    "Y": [2],
+                },
+            }
+        });
+        let ports = serde_json::json!({
+            "a": {"direction": "input", "bits": [0]},
+            "b": {"direction": "input", "bits": [1]},
+            "y": {"direction": "output", "bits": [2]},
+        });
+        let netnames = serde_json::json!({
+            "net_a": {"bits": [0]},
+            "net_b": {"bits": [1]},
+            "net_y": {"bits": [2]},
+        });
+
+        let tmp = make_yosys_json(cells, ports, Some(netnames));
+        let netlist = read_yosys_json_sax(tmp.path()).unwrap();
+
+        assert_eq!(netlist.num_modules(), 4);
+        assert_eq!(netlist.num_nets(), 3);
+        assert_eq!(netlist.number_of_nodes(), 7);
+        assert_eq!(netlist.grph.edge_count(), 6);
+        assert_eq!(netlist.num_pads, 3);
+        assert_eq!(netlist.get_module_weight("and1"), 1);
+        assert_eq!(netlist.get_module_weight("PORT_a"), 0);
+        assert!(netlist.module_fixed.contains("PORT_a"));
+        assert!(netlist.has_fixed_modules);
+    }
+
+    #[test]
+    fn test_yosys_sax_two_cells_shared_net() {
+        let cells = serde_json::json!({
+            "inv1": {
+                "type": "$_INV_",
+                "connections": {"A": [0], "Y": [1]},
+            },
+            "inv2": {
+                "type": "$_INV_",
+                "connections": {"A": [1], "Y": [2]},
+            },
+        });
+        let ports = serde_json::json!({
+            "in": {"direction": "input", "bits": [0]},
+            "out": {"direction": "output", "bits": [2]},
+        });
+
+        let tmp = make_yosys_json(cells, ports, None);
+        let netlist = read_yosys_json_sax(tmp.path()).unwrap();
+
+        assert_eq!(netlist.num_modules(), 4);
+        assert_eq!(netlist.num_nets(), 3);
+        assert_eq!(netlist.num_pads, 2);
+        assert_eq!(netlist.number_of_nodes(), 7);
+    }
+
+    #[test]
+    fn test_yosys_sax_ignores_string_constants() {
+        let cells = serde_json::json!({
+            "and1": {
+                "type": "$and",
+                "connections": {
+                    "A": [0],
+                    "B": [1],
+                    "Y": [2],
+                },
+            },
+            "const1": {
+                "type": "$const",
+                "connections": {
+                    "Y": [0],
+                    "A": ["0", "0", "0", "0"],
+                },
+            },
+        });
+        let ports = serde_json::json!({
+            "a": {"direction": "input", "bits": [0]},
+            "b": {"direction": "input", "bits": [1]},
+            "y": {"direction": "output", "bits": [2]},
+        });
+
+        let tmp = make_yosys_json(cells, ports, None);
+        let netlist = read_yosys_json_sax(tmp.path()).unwrap();
+
+        assert_eq!(netlist.num_modules(), 5);
+        assert_eq!(netlist.num_nets(), 3);
+    }
+
+    #[test]
+    fn test_yosys_sax_no_netnames() {
+        let cells = serde_json::json!({
+            "buf1": {
+                "type": "$buf",
+                "connections": {
+                    "A": [0],
+                    "Y": [1],
+                },
+            }
+        });
+        let ports = serde_json::json!({
+            "in": {"direction": "input", "bits": [0]},
+            "out": {"direction": "output", "bits": [1]},
+        });
+
+        let tmp = make_yosys_json(cells, ports, None);
+        let netlist = read_yosys_json_sax(tmp.path()).unwrap();
+
+        assert_eq!(netlist.num_modules(), 3);
+        assert_eq!(netlist.num_nets(), 2);
+        assert_eq!(netlist.num_pads, 2);
+    }
+
+    #[test]
+    fn test_yosys_sax_empty_cells() {
+        let cells = serde_json::json!({});
+        let ports = serde_json::json!({
+            "in": {"direction": "input", "bits": [0]},
+            "out": {"direction": "output", "bits": [1]},
+        });
+
+        let tmp = make_yosys_json(cells, ports, None);
+        let netlist = read_yosys_json_sax(tmp.path()).unwrap();
+
+        assert_eq!(netlist.num_modules(), 2);
+        assert_eq!(netlist.num_nets(), 2);
+        assert_eq!(netlist.num_pads, 2);
+        assert!(netlist.has_fixed_modules);
+    }
+
+    #[test]
+    fn test_yosys_sax_matches_dom_on_real_file() {
+        // Verify SAX produces the same result as DOM for a real-ish Yosys JSON
+        let cells = serde_json::json!({
+            "and1": {
+                "type": "$and",
+                "connections": {"A": [0], "B": [1], "Y": [2]},
+            }
+        });
+        let ports = serde_json::json!({
+            "a": {"direction": "input", "bits": [0]},
+            "b": {"direction": "input", "bits": [1]},
+            "y": {"direction": "output", "bits": [2]},
+        });
+
+        let tmp = make_yosys_json(cells, ports, None);
+        let dom_netlist = read_yosys_json(tmp.path()).unwrap();
+        let sax_netlist = read_yosys_json_sax(tmp.path()).unwrap();
+
+        assert_eq!(dom_netlist.num_modules(), sax_netlist.num_modules());
+        assert_eq!(dom_netlist.num_nets(), sax_netlist.num_nets());
+        assert_eq!(dom_netlist.num_pads, sax_netlist.num_pads);
+        assert_eq!(dom_netlist.number_of_nodes(), sax_netlist.number_of_nodes());
+        assert_eq!(dom_netlist.grph.edge_count(), sax_netlist.grph.edge_count());
+        assert_eq!(dom_netlist.module_fixed, sax_netlist.module_fixed);
+    }
+
+    #[test]
+    fn test_yosys_sax_invalid_missing_modules() {
+        let content = r#"{"not_modules": {}}"#;
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        use std::io::Write;
+        write!(&tmp, "{}", content).unwrap();
+        let result = read_yosys_json_sax(tmp.path());
         assert!(result.is_err());
     }
 }
