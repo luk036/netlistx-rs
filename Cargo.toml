@@ -55,5 +55,9 @@ quickcheck_macros = "1.0"
 tempfile = "3.10"
 netlistx-rs = { path = ".", features = ["quickcheck"] }
 
+[[bench]]
+name = "yosys_json_bench"
+harness = false
+
 [profile.bench]
 debug = true
