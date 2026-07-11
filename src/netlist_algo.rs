@@ -53,7 +53,7 @@ where
 
         for vtx in &modules {
             let g = gap.entry(vtx.clone()).or_insert(weight[vtx]);
-            *g = *g - min_val;
+            *g = if *g > min_val { *g - min_val } else { W::default() };
         }
     }
 
@@ -119,11 +119,11 @@ where
 
         if &min_net != net {
             let g = gap.entry(net.clone()).or_insert(weight[net]);
-            *g = *g - min_val;
+            *g = if *g > min_val { *g - min_val } else { W::default() };
             for m in &modules_in_net {
                 for net2 in &netlist.get_module_nets(m) {
                     let g = gap.entry(net2.clone()).or_insert(weight[net2]);
-                    *g = *g - min_val;
+                    *g = if *g > min_val { *g - min_val } else { W::default() };
                 }
             }
         }
