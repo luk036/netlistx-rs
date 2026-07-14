@@ -1,7 +1,5 @@
 use indexmap::IndexMap;
-use indexmap::IndexSet;
 use petgraph::graph::NodeIndex;
-use std::collections::HashMap;
 use std::collections::HashSet;
 
 /// Error type for netlist operations
@@ -26,62 +24,61 @@ pub type NetlistResult<T> = Result<T, NetlistError>;
 
 /// A netlist represents a hypergraph used in electronic design automation.
 ///
-/// The `Netlist` struct contains modules (cells) and nets (hyperedges) that connect
-/// multiple modules together. Each net can connect to multiple modules, making this
-/// a true hypergraph representation.
+/// Modules and nets are identified by integer indices (0..num_modules for modules,
+/// 0..num_nets for nets), matching the C++ and Python sibling projects.
+/// Names are stored separately for I/O and display purposes.
 #[derive(Debug, Clone)]
 pub struct Netlist {
     /// Number of I/O pads
-    pub num_pads: i32,
-    /// Cost model identifier
-    pub cost_model: i32,
+    pub num_pads: usize,
     /// Graph representation (nodes are both modules and nets)
-    pub grph: petgraph::Graph<String, (), petgraph::Undirected>,
-    /// List of module names
-    pub modules: IndexSet<String>,
-    /// List of net names
-    pub nets: IndexSet<String>,
-    /// Petgraph node indices for each module (parallel to `modules` order)
+    pub gr: petgraph::Graph<(), (), petgraph::Undirected>,
+    /// Number of modules
+    pub num_modules: usize,
+    /// Number of nets
+    pub num_nets: usize,
+    /// Module names indexed by module index (0..num_modules)
+    pub module_names: Vec<String>,
+    /// Net names indexed by net index (0..num_nets)
+    pub net_names: Vec<String>,
+    /// Name → module index lookup
+    pub module_map: IndexMap<String, usize>,
+    /// Name → net index lookup
+    pub net_map: IndexMap<String, usize>,
+    /// Petgraph node index for each module (parallel to module_names)
     module_nodes: Vec<NodeIndex>,
-    /// Petgraph node indices for each net (parallel to `nets` order)
+    /// Petgraph node index for each net (parallel to net_names)
     net_nodes: Vec<NodeIndex>,
-    /// Optional net weights
-    pub net_weight: Option<IndexMap<String, i32>>,
-    /// Optional module weights
-    pub module_weight: Option<IndexMap<String, i32>>,
-    /// Set of fixed modules that cannot be moved
-    pub module_fixed: HashSet<String>,
-    /// Flag indicating whether the netlist has any fixed modules
+    /// Module weights indexed by module index (default 1)
+    pub module_weight: Vec<i32>,
+    /// Net weights indexed by net index (default 1)
+    pub net_weight: Vec<i32>,
+    /// Fixed modules (by module index)
+    pub module_fixed: HashSet<usize>,
+    /// Whether any modules are fixed
     pub has_fixed_modules: bool,
     /// Cached maximum module degree
-    pub max_degree: u32,
+    pub max_degree: usize,
     /// Cached maximum net degree
-    pub max_net_degree: u32,
+    pub max_net_degree: usize,
 }
 
 impl Netlist {
-    /// Creates a new, empty `Netlist`.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use netlistx_rs::Netlist;
-    ///
-    /// let netlist = Netlist::new();
-    /// assert_eq!(netlist.num_modules(), 0);
-    /// assert_eq!(netlist.num_nets(), 0);
-    /// ```
+    /// Create a new, empty `Netlist`.
     pub fn new() -> Self {
         Netlist {
             num_pads: 0,
-            cost_model: 0,
-            grph: petgraph::Graph::new_undirected(),
-            modules: IndexSet::new(),
-            nets: IndexSet::new(),
+            gr: petgraph::Graph::new_undirected(),
+            num_modules: 0,
+            num_nets: 0,
+            module_names: Vec::new(),
+            net_names: Vec::new(),
+            module_map: IndexMap::new(),
+            net_map: IndexMap::new(),
             module_nodes: Vec::new(),
             net_nodes: Vec::new(),
-            net_weight: None,
-            module_weight: None,
+            module_weight: Vec::new(),
+            net_weight: Vec::new(),
             module_fixed: HashSet::new(),
             has_fixed_modules: false,
             max_degree: 0,
@@ -89,250 +86,283 @@ impl Netlist {
         }
     }
 
-    /// Returns the number of modules in the netlist
+    /// Create a new `Netlist` from a graph with given module and net counts.
+    ///
+    /// Mirrors the C++ constructor: `Netlist(graph_t gr, uint32_t numModules, uint32_t numNets)`.
+    /// Modules are assigned indices 0..num_modules, nets num_modules..num_modules+num_nets.
+    pub fn from_graph(
+        gr: petgraph::Graph<(), (), petgraph::Undirected>,
+        num_modules: usize,
+        num_nets: usize,
+    ) -> Self {
+        let total = gr.node_count();
+        assert_eq!(
+            total,
+            num_modules + num_nets,
+            "graph node count must equal num_modules + num_nets"
+        );
+
+        let module_nodes: Vec<NodeIndex> = (0..num_modules).map(NodeIndex::new).collect();
+        let net_nodes: Vec<NodeIndex> = (0..num_nets)
+            .map(|i| NodeIndex::new(num_modules + i))
+            .collect();
+
+        let module_names: Vec<String> = (0..num_modules).map(|i| format!("m{}", i)).collect();
+        let net_names: Vec<String> = (0..num_nets).map(|i| format!("n{}", i)).collect();
+
+        let mut module_map = IndexMap::new();
+        for (i, name) in module_names.iter().enumerate() {
+            module_map.insert(name.clone(), i);
+        }
+        let mut net_map = IndexMap::new();
+        for (i, name) in net_names.iter().enumerate() {
+            net_map.insert(name.clone(), i);
+        }
+
+        let mut nl = Netlist {
+            num_pads: 0,
+            gr,
+            num_modules,
+            num_nets,
+            module_names,
+            net_names,
+            module_map,
+            net_map,
+            module_nodes,
+            net_nodes,
+            module_weight: vec![1; num_modules],
+            net_weight: vec![1; num_nets],
+            module_fixed: HashSet::new(),
+            has_fixed_modules: false,
+            max_degree: 0,
+            max_net_degree: 0,
+        };
+        nl.recompute_max_degrees();
+        nl
+    }
+
+    /// Number of modules.
+    pub fn number_of_modules(&self) -> usize {
+        self.num_modules
+    }
+
+    /// Number of modules (alias).
     pub fn num_modules(&self) -> usize {
-        self.modules.len()
+        self.num_modules
     }
 
-    /// Returns the number of nets in the netlist
+    /// Number of nets.
+    pub fn number_of_nets(&self) -> usize {
+        self.num_nets
+    }
+
+    /// Number of nets (alias).
     pub fn num_nets(&self) -> usize {
-        self.nets.len()
+        self.num_nets
     }
 
-    /// Adds a module to the netlist.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the module name is invalid or the module already exists.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use netlistx_rs::Netlist;
-    ///
-    /// let mut netlist = Netlist::new();
-    /// netlist.add_module("m1".to_string()).unwrap();
-    /// assert_eq!(netlist.num_modules(), 1);
-    /// ```
-    pub fn add_module(&mut self, module: String) -> NetlistResult<()> {
-        if module.is_empty() {
-            return Err(NetlistError::InvalidModuleName(module));
-        }
-
-        if self.modules.contains(&module) {
-            return Err(NetlistError::ModuleAlreadyExists(module));
-        }
-
-        let node_index = self.grph.add_node(module.clone());
-        self.modules.insert(module.clone());
-        self.module_nodes.push(node_index);
-
-        Ok(())
-    }
-
-    /// Adds a net to the netlist.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the net name is invalid or the net already exists.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use netlistx_rs::Netlist;
-    ///
-    /// let mut netlist = Netlist::new();
-    /// netlist.add_net("n1".to_string()).unwrap();
-    /// assert_eq!(netlist.num_nets(), 1);
-    /// ```
-    pub fn add_net(&mut self, net: String) -> NetlistResult<()> {
-        if net.is_empty() {
-            return Err(NetlistError::InvalidNetName(net));
-        }
-
-        if self.nets.contains(&net) {
-            return Err(NetlistError::NetAlreadyExists(net));
-        }
-
-        let node_index = self.grph.add_node(net.clone());
-        self.nets.insert(net.clone());
-        self.net_nodes.push(node_index);
-
-        Ok(())
-    }
-
-    /// Adds an edge between a net and a module.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if either the net or module is not found.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use netlistx_rs::Netlist;
-    ///
-    /// let mut netlist = Netlist::new();
-    /// netlist.add_module("m1".to_string()).unwrap();
-    /// netlist.add_net("n1".to_string()).unwrap();
-    /// netlist.add_edge("n1", "m1").unwrap();
-    /// assert_eq!(netlist.grph.edge_count(), 1);
-    /// ```
-    pub fn add_edge(&mut self, net: &str, module: &str) -> NetlistResult<()> {
-        let net_index = self
-            .nets
-            .get_index_of(net)
-            .and_then(|i| self.net_nodes.get(i).copied())
-            .ok_or_else(|| NetlistError::NetNotFound(net.to_string()))?;
-        let module_index = self
-            .modules
-            .get_index_of(module)
-            .and_then(|i| self.module_nodes.get(i).copied())
-            .ok_or_else(|| NetlistError::ModuleNotFound(module.to_string()))?;
-
-        // Avoid duplicate edges (same behavior as networkx.Graph.add_edge)
-        if self.grph.find_edge(net_index, module_index).is_none() {
-            self.grph.add_edge(net_index, module_index, ());
-            self.invalidate_cache(module, net);
-        }
-
-        Ok(())
-    }
-
-    /// Returns the total number of nodes (modules + nets) in the graph.
+    /// Total nodes in the graph (modules + nets).
     pub fn number_of_nodes(&self) -> usize {
-        self.grph.node_count()
+        self.gr.node_count()
     }
 
-    /// Gets the degree (number of connected nets) of a module.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use netlistx_rs::Netlist;
-    ///
-    /// let mut netlist = Netlist::new();
-    /// netlist.add_module("m1".to_string()).unwrap();
-    /// netlist.add_net("n1".to_string()).unwrap();
-    /// netlist.add_edge("n1", "m1").unwrap();
-    /// assert_eq!(netlist.get_module_degree("m1"), 1);
-    /// ```
-    pub fn get_module_degree(&self, module: &str) -> usize {
-        self.modules
-            .get_index_of(module)
-            .and_then(|i| self.module_nodes.get(i))
-            .map(|&node_index| self.grph.neighbors(node_index).count())
-            .unwrap_or(0)
-    }
-
-    /// Gets the degree (number of connected modules) of a net.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use netlistx_rs::Netlist;
-    ///
-    /// let mut netlist = Netlist::new();
-    /// netlist.add_module("m1".to_string()).unwrap();
-    /// netlist.add_module("m2".to_string()).unwrap();
-    /// netlist.add_net("n1".to_string()).unwrap();
-    /// netlist.add_edge("n1", "m1").unwrap();
-    /// netlist.add_edge("n1", "m2").unwrap();
-    /// assert_eq!(netlist.get_net_degree("n1"), 2);
-    /// ```
-    pub fn get_net_degree(&self, net: &str) -> usize {
-        self.nets
-            .get_index_of(net)
-            .and_then(|i| self.net_nodes.get(i))
-            .map(|&node_index| self.grph.neighbors(node_index).count())
-            .unwrap_or(0)
-    }
-
-    /// Checks if a module exists in the netlist
-    pub fn has_module(&self, module: &str) -> bool {
-        self.modules.contains(module)
-    }
-
-    /// Checks if a net exists in the netlist
-    pub fn has_net(&self, net: &str) -> bool {
-        self.nets.contains(net)
-    }
-
-    /// Gets all modules connected to a net
-    pub fn get_net_modules(&self, net: &str) -> Vec<String> {
-        let mut modules = Vec::new();
-        if let Some(&net_index) = self
-            .nets
-            .get_index_of(net)
-            .and_then(|i| self.net_nodes.get(i))
-        {
-            for neighbor_index in self.grph.neighbors(net_index) {
-                let neighbor_name = &self.grph[neighbor_index];
-                if self.modules.contains(neighbor_name) {
-                    modules.push(neighbor_name.clone());
-                }
-            }
+    /// Add a module with the given name.
+    pub fn add_module(&mut self, name: String) -> NetlistResult<usize> {
+        if name.is_empty() {
+            return Err(NetlistError::InvalidModuleName(name));
         }
-        modules
-    }
-
-    /// Gets all nets connected to a module
-    pub fn get_module_nets(&self, module: &str) -> Vec<String> {
-        let mut nets = Vec::new();
-        if let Some(&module_index) = self
-            .modules
-            .get_index_of(module)
-            .and_then(|i| self.module_nodes.get(i))
-        {
-            for neighbor_index in self.grph.neighbors(module_index) {
-                let neighbor_name = &self.grph[neighbor_index];
-                if self.nets.contains(neighbor_name) {
-                    nets.push(neighbor_name.clone());
-                }
-            }
+        if self.module_map.contains_key(&name) {
+            return Err(NetlistError::ModuleAlreadyExists(name));
         }
-        nets
+        let idx = self.num_modules;
+        self.module_map.insert(name.clone(), idx);
+        self.module_names.push(name);
+        let node = self.gr.add_node(());
+        self.module_nodes.push(node);
+        self.module_weight.push(1);
+        self.num_modules += 1;
+        Ok(idx)
     }
 
-    /// Returns the maximum degree among all modules.
-    pub fn get_max_degree(&self) -> u32 {
+    /// Add a net with the given name.
+    pub fn add_net(&mut self, name: String) -> NetlistResult<usize> {
+        if name.is_empty() {
+            return Err(NetlistError::InvalidNetName(name));
+        }
+        if self.net_map.contains_key(&name) {
+            return Err(NetlistError::NetAlreadyExists(name));
+        }
+        let idx = self.num_nets;
+        self.net_map.insert(name.clone(), idx);
+        self.net_names.push(name);
+        let node = self.gr.add_node(());
+        self.net_nodes.push(node);
+        self.net_weight.push(1);
+        self.num_nets += 1;
+        Ok(idx)
+    }
+
+    /// Add an edge between net `net_idx` and module `module_idx`.
+    pub fn add_edge(&mut self, net_idx: usize, module_idx: usize) -> NetlistResult<()> {
+        if net_idx >= self.num_nets {
+            return Err(NetlistError::NetNotFound(format!("net index {}", net_idx)));
+        }
+        if module_idx >= self.num_modules {
+            return Err(NetlistError::ModuleNotFound(format!(
+                "module index {}",
+                module_idx
+            )));
+        }
+        let net_node = self.net_nodes[net_idx];
+        let mod_node = self.module_nodes[module_idx];
+        if self.gr.find_edge(net_node, mod_node).is_none() {
+            self.gr.add_edge(net_node, mod_node, ());
+            self.update_max_degrees(module_idx, net_idx);
+        }
+        Ok(())
+    }
+
+    /// Get degree of module `module_idx` (number of connected nets).
+    pub fn get_module_degree(&self, module_idx: usize) -> usize {
+        if module_idx >= self.num_modules {
+            return 0;
+        }
+        self.gr.neighbors(self.module_nodes[module_idx]).count()
+    }
+
+    /// Get degree of net `net_idx` (number of connected modules).
+    pub fn get_net_degree(&self, net_idx: usize) -> usize {
+        if net_idx >= self.num_nets {
+            return 0;
+        }
+        self.gr.neighbors(self.net_nodes[net_idx]).count()
+    }
+
+    /// Get module indices connected to net `net_idx`.
+    pub fn get_net_modules(&self, net_idx: usize) -> Vec<usize> {
+        if net_idx >= self.num_nets {
+            return Vec::new();
+        }
+        let net_node = self.net_nodes[net_idx];
+        self.gr
+            .neighbors(net_node)
+            .filter_map(|n| {
+                let idx = n.index();
+                if idx < self.num_modules {
+                    Some(idx)
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    /// Get net indices connected to module `module_idx`.
+    pub fn get_module_nets(&self, module_idx: usize) -> Vec<usize> {
+        if module_idx >= self.num_modules {
+            return Vec::new();
+        }
+        let mod_node = self.module_nodes[module_idx];
+        self.gr
+            .neighbors(mod_node)
+            .filter_map(|n| {
+                let idx = n.index() - self.num_modules;
+                if idx < self.num_nets {
+                    Some(idx)
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    /// Get module weight (default 1).
+    pub fn get_module_weight(&self, module_idx: usize) -> i32 {
+        if module_idx < self.module_weight.len() {
+            self.module_weight[module_idx]
+        } else {
+            1
+        }
+    }
+
+    /// Set module weight.
+    pub fn set_module_weight(&mut self, module_idx: usize, weight: i32) {
+        if module_idx < self.module_weight.len() {
+            self.module_weight[module_idx] = weight;
+        }
+    }
+
+    /// Get net weight (default 1).
+    pub fn get_net_weight(&self, net_idx: usize) -> i32 {
+        if net_idx < self.net_weight.len() {
+            self.net_weight[net_idx]
+        } else {
+            1
+        }
+    }
+
+    /// Set net weight.
+    pub fn set_net_weight(&mut self, net_idx: usize, weight: i32) {
+        if net_idx < self.net_weight.len() {
+            self.net_weight[net_idx] = weight;
+        }
+    }
+
+    /// Maximum degree among all modules.
+    pub fn get_max_degree(&self) -> usize {
         self.max_degree
     }
 
-    /// Returns the maximum degree among all nets.
-    pub fn get_max_net_degree(&self) -> u32 {
+    /// Maximum degree among all nets.
+    pub fn get_max_net_degree(&self) -> usize {
         self.max_net_degree
     }
 
-    /// Returns the weight of a module, defaulting to 1 if no weights are set.
-    pub fn get_module_weight(&self, module: &str) -> i32 {
-        self.module_weight
-            .as_ref()
-            .and_then(|w| w.get(module).copied())
-            .unwrap_or(1)
+    /// Look up module index by name.
+    pub fn get_module_by_name(&self, name: &str) -> Option<usize> {
+        self.module_map.get(name).copied()
     }
 
-    /// Sets the weight of a module, initializing the weight map if needed.
-    pub fn set_module_weight(&mut self, module: &str, weight: i32) {
-        self.module_weight
-            .get_or_insert_with(IndexMap::new)
-            .insert(module.to_string(), weight);
+    /// Look up net index by name.
+    pub fn get_net_by_name(&self, name: &str) -> Option<usize> {
+        self.net_map.get(name).copied()
     }
 
-    /// Returns the weight of a net (currently always returns 1).
-    pub fn get_net_weight(&self, _net: &str) -> i32 {
-        1
+    /// Iterate over all module indices.
+    pub fn module_indices(&self) -> impl Iterator<Item = usize> {
+        0..self.num_modules
     }
 
-    /// Update cached max degrees after adding an edge.
-    fn invalidate_cache(&mut self, module: &str, net: &str) {
-        let mod_deg = self.get_module_degree(module) as u32;
-        let net_deg = self.get_net_degree(net) as u32;
-        if mod_deg > self.max_degree {
-            self.max_degree = mod_deg;
+    /// Iterate over all net indices.
+    pub fn net_indices(&self) -> impl Iterator<Item = usize> {
+        0..self.num_nets
+    }
+
+    fn update_max_degrees(&mut self, module_idx: usize, net_idx: usize) {
+        let md = self.get_module_degree(module_idx);
+        if md > self.max_degree {
+            self.max_degree = md;
         }
-        if net_deg > self.max_net_degree {
-            self.max_net_degree = net_deg;
+        let nd = self.get_net_degree(net_idx);
+        if nd > self.max_net_degree {
+            self.max_net_degree = nd;
+        }
+    }
+
+    fn recompute_max_degrees(&mut self) {
+        self.max_degree = 0;
+        self.max_net_degree = 0;
+        for m in self.module_indices() {
+            let d = self.get_module_degree(m);
+            if d > self.max_degree {
+                self.max_degree = d;
+            }
+        }
+        for n in self.net_indices() {
+            let d = self.get_net_degree(n);
+            if d > self.max_net_degree {
+                self.max_net_degree = d;
+            }
         }
     }
 }
@@ -343,69 +373,74 @@ impl Default for Netlist {
     }
 }
 
-/// Builder for constructing `Netlist` instances with a fluent API.
+/// Builder for constructing `Netlist` instances.
 ///
-/// # Examples
-///
-/// ```
-/// use netlistx_rs::NetlistBuilder;
-///
-/// let netlist = NetlistBuilder::new()
-///     .add_module("cell_a")
-///     .add_module("cell_b")
-///     .add_net("net1")
-///     .add_edge("net1", "cell_a")
-///     .add_edge("net1", "cell_b")
-///     .build()
-///     .unwrap();
-/// ```
+/// Accepts string names internally and maps them to integer indices
+/// at `build()` time.
 pub struct NetlistBuilder {
     netlist: Netlist,
+    pending_modules: Vec<String>,
+    pending_nets: Vec<String>,
+    pending_edges: Vec<(String, String)>,
 }
 
 impl NetlistBuilder {
-    /// Creates a new `NetlistBuilder`.
     pub fn new() -> Self {
         Self {
             netlist: Netlist::new(),
+            pending_modules: Vec::new(),
+            pending_nets: Vec::new(),
+            pending_edges: Vec::new(),
         }
     }
 
-    /// Adds a module to the netlist being built.
-    pub fn add_module(mut self, module: &str) -> Self {
-        // Ignore errors during building - let them surface in build()
-        let _ = self.netlist.add_module(module.to_string());
+    /// Add a module name (will be assigned the next index).
+    pub fn add_module(mut self, name: &str) -> Self {
+        self.pending_modules.push(name.to_string());
         self
     }
 
-    /// Adds a net to the netlist being built.
-    pub fn add_net(mut self, net: &str) -> Self {
-        // Ignore errors during building - let them surface in build()
-        let _ = self.netlist.add_net(net.to_string());
+    /// Add a net name (will be assigned the next index).
+    pub fn add_net(mut self, name: &str) -> Self {
+        self.pending_nets.push(name.to_string());
         self
     }
 
-    /// Adds an edge between a net and a module.
+    /// Add an edge between a net and a module (by name).
     pub fn add_edge(mut self, net: &str, module: &str) -> Self {
-        // Ignore errors during building - let them surface in build()
-        let _ = self.netlist.add_edge(net, module);
+        self.pending_edges
+            .push((net.to_string(), module.to_string()));
         self
     }
 
-    /// Sets the number of pads.
-    pub fn with_pads(mut self, num_pads: i32) -> Self {
+    /// Set the number of pads.
+    pub fn with_pads(mut self, num_pads: usize) -> Self {
         self.netlist.num_pads = num_pads;
         self
     }
 
-    /// Sets the cost model.
-    pub fn with_cost_model(mut self, cost_model: i32) -> Self {
-        self.netlist.cost_model = cost_model;
-        self
-    }
-
-    /// Builds and returns the `Netlist`.
-    pub fn build(self) -> NetlistResult<Netlist> {
+    /// Build the `Netlist`, resolving names to indices.
+    pub fn build(mut self) -> NetlistResult<Netlist> {
+        // Add all pending modules
+        for name in &self.pending_modules {
+            self.netlist.add_module(name.clone())?;
+        }
+        // Add all pending nets
+        for name in &self.pending_nets {
+            self.netlist.add_net(name.clone())?;
+        }
+        // Add all pending edges
+        for (net_name, mod_name) in &self.pending_edges {
+            let net_idx = self
+                .netlist
+                .get_net_by_name(net_name)
+                .ok_or_else(|| NetlistError::NetNotFound(net_name.clone()))?;
+            let mod_idx = self
+                .netlist
+                .get_module_by_name(mod_name)
+                .ok_or_else(|| NetlistError::ModuleNotFound(mod_name.clone()))?;
+            self.netlist.add_edge(net_idx, mod_idx)?;
+        }
         Ok(self.netlist)
     }
 }
@@ -416,136 +451,104 @@ impl Default for NetlistBuilder {
     }
 }
 
-/// Snapshot of netlist state for backtracking/undo operations.
-///
-/// Stores the external nets and module states at a particular point in time,
-/// enabling rollback functionality for partitioning algorithms.
-#[derive(Debug, Clone)]
-pub struct Snapshot {
-    /// Set of external (cut) nets
-    pub extern_nets: HashSet<String>,
-    /// Dictionary mapping module indices to their partition assignments
-    pub extern_modules: HashMap<String, u8>,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn create_test_netlist() -> Netlist {
-        let mut netlist = Netlist::new();
-        netlist.add_module("a0".to_string()).unwrap();
-        netlist.add_module("a1".to_string()).unwrap();
-        netlist.add_module("a2".to_string()).unwrap();
-        netlist.add_net("a3".to_string()).unwrap();
-        netlist.add_net("a4".to_string()).unwrap();
-        netlist.add_net("a5".to_string()).unwrap();
-        netlist.add_edge("a3", "a0").unwrap();
-        netlist.add_edge("a3", "a1").unwrap();
-        netlist.add_edge("a5", "a0").unwrap();
-
-        let mut module_weight: IndexMap<String, i32> = IndexMap::new();
-        module_weight.insert("a0".to_string(), 533);
-        module_weight.insert("a1".to_string(), 543);
-        module_weight.insert("a2".to_string(), 532);
-        netlist.module_weight = Some(module_weight);
-
-        netlist
+        let mut nl = Netlist::new();
+        nl.add_module("a0".to_string()).unwrap();
+        nl.add_module("a1".to_string()).unwrap();
+        nl.add_module("a2".to_string()).unwrap();
+        nl.add_net("a3".to_string()).unwrap();
+        nl.add_net("a4".to_string()).unwrap();
+        nl.add_net("a5".to_string()).unwrap();
+        nl.add_edge(0, 0).unwrap(); // a3-a0
+        nl.add_edge(0, 1).unwrap(); // a3-a1
+        nl.add_edge(2, 0).unwrap(); // a5-a0
+        nl.set_module_weight(0, 533);
+        nl.set_module_weight(1, 543);
+        nl.set_module_weight(2, 532);
+        nl
     }
 
     #[test]
     fn test_create_test_netlist() {
-        let netlist = create_test_netlist();
-        assert_eq!(netlist.num_modules(), 3);
-        assert_eq!(netlist.num_nets(), 3);
-        assert_eq!(netlist.grph.node_count(), 6);
-        assert_eq!(netlist.grph.edge_count(), 3);
+        let nl = create_test_netlist();
+        assert_eq!(nl.num_modules(), 3);
+        assert_eq!(nl.num_nets(), 3);
+        assert_eq!(nl.gr.node_count(), 6);
+        assert_eq!(nl.gr.edge_count(), 3);
     }
 
     #[test]
     fn test_new_netlist() {
-        let netlist = Netlist::new();
-        assert_eq!(netlist.num_modules(), 0);
-        assert_eq!(netlist.num_nets(), 0);
-        assert_eq!(netlist.grph.node_count(), 0);
-        assert_eq!(netlist.grph.edge_count(), 0);
+        let nl = Netlist::new();
+        assert_eq!(nl.num_modules(), 0);
+        assert_eq!(nl.num_nets(), 0);
+        assert_eq!(nl.gr.node_count(), 0);
+        assert_eq!(nl.gr.edge_count(), 0);
     }
 
     #[test]
     fn test_add_module() {
-        let mut netlist = Netlist::new();
-        netlist.add_module("m1".to_string()).unwrap();
-        assert_eq!(netlist.num_modules(), 1);
-        assert!(netlist.modules.contains("m1"));
-        assert_eq!(netlist.grph.node_count(), 1);
-    }
-
-    #[test]
-    fn test_add_duplicate_module() {
-        let mut netlist = Netlist::new();
-        netlist.add_module("m1".to_string()).unwrap();
-        let result = netlist.add_module("m1".to_string());
-        assert!(result.is_err());
+        let mut nl = Netlist::new();
+        let idx = nl.add_module("m1".to_string()).unwrap();
+        assert_eq!(idx, 0);
+        assert_eq!(nl.num_modules(), 1);
+        assert_eq!(nl.module_names[0], "m1");
+        assert_eq!(nl.gr.node_count(), 1);
     }
 
     #[test]
     fn test_add_net() {
-        let mut netlist = Netlist::new();
-        netlist.add_net("n1".to_string()).unwrap();
-        assert_eq!(netlist.num_nets(), 1);
-        assert!(netlist.nets.contains("n1"));
-        assert_eq!(netlist.grph.node_count(), 1);
+        let mut nl = Netlist::new();
+        let idx = nl.add_net("n1".to_string()).unwrap();
+        assert_eq!(idx, 0);
+        assert_eq!(nl.num_nets(), 1);
+        assert_eq!(nl.net_names[0], "n1");
+        assert_eq!(nl.gr.node_count(), 1);
     }
 
     #[test]
     fn test_add_edge() {
-        let mut netlist = Netlist::new();
-        netlist.add_module("m1".to_string()).unwrap();
-        netlist.add_net("n1".to_string()).unwrap();
-        netlist.add_edge("n1", "m1").unwrap();
-        assert_eq!(netlist.grph.edge_count(), 1);
-    }
-
-    #[test]
-    fn test_add_edge_invalid_module() {
-        let mut netlist = Netlist::new();
-        netlist.add_net("n1".to_string()).unwrap();
-        let result = netlist.add_edge("n1", "m1");
-        assert!(result.is_err());
+        let mut nl = Netlist::new();
+        nl.add_module("m1".to_string()).unwrap();
+        nl.add_net("n1".to_string()).unwrap();
+        nl.add_edge(0, 0).unwrap();
+        assert_eq!(nl.gr.edge_count(), 1);
     }
 
     #[test]
     fn test_get_module_degree() {
-        let mut netlist = Netlist::new();
-        netlist.add_module("m1".to_string()).unwrap();
-        netlist.add_module("m2".to_string()).unwrap();
-        netlist.add_net("n1".to_string()).unwrap();
-        netlist.add_net("n2".to_string()).unwrap();
-        netlist.add_edge("n1", "m1").unwrap();
-        netlist.add_edge("n2", "m1").unwrap();
-        netlist.add_edge("n1", "m2").unwrap();
-
-        assert_eq!(netlist.get_module_degree("m1"), 2);
-        assert_eq!(netlist.get_module_degree("m2"), 1);
+        let mut nl = Netlist::new();
+        nl.add_module("m1".to_string()).unwrap();
+        nl.add_module("m2".to_string()).unwrap();
+        nl.add_net("n1".to_string()).unwrap();
+        nl.add_net("n2".to_string()).unwrap();
+        nl.add_edge(0, 0).unwrap();
+        nl.add_edge(1, 0).unwrap();
+        nl.add_edge(0, 1).unwrap();
+        assert_eq!(nl.get_module_degree(0), 2);
+        assert_eq!(nl.get_module_degree(1), 1);
     }
 
     #[test]
     fn test_get_net_degree() {
-        let mut netlist = Netlist::new();
-        netlist.add_module("m1".to_string()).unwrap();
-        netlist.add_module("m2".to_string()).unwrap();
-        netlist.add_module("m3".to_string()).unwrap();
-        netlist.add_net("n1".to_string()).unwrap();
-        netlist.add_edge("n1", "m1").unwrap();
-        netlist.add_edge("n1", "m2").unwrap();
-        netlist.add_edge("n1", "m3").unwrap();
-
-        assert_eq!(netlist.get_net_degree("n1"), 3);
+        let mut nl = Netlist::new();
+        nl.add_module("m1".to_string()).unwrap();
+        nl.add_module("m2".to_string()).unwrap();
+        nl.add_module("m3".to_string()).unwrap();
+        nl.add_net("n1".to_string()).unwrap();
+        nl.add_edge(0, 0).unwrap();
+        nl.add_edge(0, 1).unwrap();
+        nl.add_edge(0, 2).unwrap();
+        assert_eq!(nl.get_net_degree(0), 3);
     }
 
     #[test]
     fn test_builder() {
-        let netlist = NetlistBuilder::new()
+        let nl = NetlistBuilder::new()
             .add_module("m1")
             .add_module("m2")
             .add_net("n1")
@@ -553,168 +556,130 @@ mod tests {
             .add_edge("n1", "m2")
             .build()
             .unwrap();
-
-        assert_eq!(netlist.num_modules(), 2);
-        assert_eq!(netlist.num_nets(), 1);
-    }
-
-    #[test]
-    fn test_get_net_modules() {
-        let mut netlist = Netlist::new();
-        netlist.add_module("m1".to_string()).unwrap();
-        netlist.add_module("m2".to_string()).unwrap();
-        netlist.add_net("n1".to_string()).unwrap();
-        netlist.add_edge("n1", "m1").unwrap();
-        netlist.add_edge("n1", "m2").unwrap();
-
-        let modules = netlist.get_net_modules("n1");
-        assert_eq!(modules.len(), 2);
-        assert!(modules.contains(&"m1".to_string()));
-        assert!(modules.contains(&"m2".to_string()));
-    }
-
-    #[test]
-    fn test_get_module_nets() {
-        let mut netlist = Netlist::new();
-        netlist.add_module("m1".to_string()).unwrap();
-        netlist.add_net("n1".to_string()).unwrap();
-        netlist.add_net("n2".to_string()).unwrap();
-        netlist.add_edge("n1", "m1").unwrap();
-        netlist.add_edge("n2", "m1").unwrap();
-
-        let nets = netlist.get_module_nets("m1");
-        assert_eq!(nets.len(), 2);
-        assert!(nets.contains(&"n1".to_string()));
-        assert!(nets.contains(&"n2".to_string()));
-    }
-
-    #[test]
-    fn test_has_module() {
-        let mut netlist = Netlist::new();
-        netlist.add_module("m1".to_string()).unwrap();
-        assert!(netlist.has_module("m1"));
-        assert!(!netlist.has_module("m2"));
-    }
-
-    #[test]
-    fn test_has_net() {
-        let mut netlist = Netlist::new();
-        netlist.add_net("n1".to_string()).unwrap();
-        assert!(netlist.has_net("n1"));
-        assert!(!netlist.has_net("n2"));
-    }
-
-    #[test]
-    fn test_add_module_empty_name() {
-        let mut netlist = Netlist::new();
-        let result = netlist.add_module("".to_string());
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_add_net_empty_name() {
-        let mut netlist = Netlist::new();
-        let result = netlist.add_net("".to_string());
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_add_duplicate_net() {
-        let mut netlist = Netlist::new();
-        netlist.add_net("n1".to_string()).unwrap();
-        let result = netlist.add_net("n1".to_string());
-        assert!(result.is_err());
+        assert_eq!(nl.num_modules(), 2);
+        assert_eq!(nl.num_nets(), 1);
     }
 
     #[test]
     fn test_builder_with_pads() {
-        let netlist = NetlistBuilder::new()
+        let nl = NetlistBuilder::new()
             .add_module("m1")
             .with_pads(10)
             .build()
             .unwrap();
-        assert_eq!(netlist.num_pads, 10);
+        assert_eq!(nl.num_pads, 10);
     }
 
     #[test]
-    fn test_builder_with_cost_model() {
-        let netlist = NetlistBuilder::new()
-            .add_module("m1")
-            .with_cost_model(1)
-            .build()
-            .unwrap();
-        assert_eq!(netlist.cost_model, 1);
+    fn test_netlist_from_graph() {
+        let mut gr = petgraph::Graph::<(), (), petgraph::Undirected>::new_undirected();
+        gr.add_node(()); // module 0
+        gr.add_node(()); // module 1
+        gr.add_node(()); // net 0
+        gr.add_edge(NodeIndex::new(2), NodeIndex::new(0), ());
+        let nl = Netlist::from_graph(gr, 2, 1);
+        assert_eq!(nl.num_modules(), 2);
+        assert_eq!(nl.num_nets(), 1);
+        assert_eq!(nl.get_module_degree(0), 1);
+        assert_eq!(nl.get_module_degree(1), 0);
     }
 
     #[test]
-    fn test_default_netlist() {
-        let netlist: Netlist = Default::default();
-        assert_eq!(netlist.num_modules(), 0);
-        assert_eq!(netlist.num_nets(), 0);
+    fn test_get_net_modules() {
+        let mut nl = Netlist::new();
+        nl.add_module("m1".to_string()).unwrap();
+        nl.add_module("m2".to_string()).unwrap();
+        nl.add_net("n1".to_string()).unwrap();
+        nl.add_edge(0, 0).unwrap();
+        nl.add_edge(0, 1).unwrap();
+        let modules = nl.get_net_modules(0);
+        assert_eq!(modules.len(), 2);
+        assert!(modules.contains(&0));
+        assert!(modules.contains(&1));
     }
 
     #[test]
-    fn test_default_netlist_builder() {
-        let builder: NetlistBuilder = Default::default();
-        let netlist = builder.build().unwrap();
-        assert_eq!(netlist.num_modules(), 0);
+    fn test_get_module_nets() {
+        let mut nl = Netlist::new();
+        nl.add_module("m1".to_string()).unwrap();
+        nl.add_net("n1".to_string()).unwrap();
+        nl.add_net("n2".to_string()).unwrap();
+        nl.add_edge(0, 0).unwrap();
+        nl.add_edge(1, 0).unwrap();
+        let nets = nl.get_module_nets(0);
+        assert_eq!(nets.len(), 2);
+        assert!(nets.contains(&0));
+        assert!(nets.contains(&1));
     }
 
     #[test]
-    fn test_get_module_degree_nonexistent() {
-        let netlist = Netlist::new();
-        assert_eq!(netlist.get_module_degree("nonexistent"), 0);
-    }
-
-    #[test]
-    fn test_get_net_degree_nonexistent() {
-        let netlist = Netlist::new();
-        assert_eq!(netlist.get_net_degree("nonexistent"), 0);
-    }
-
-    #[test]
-    fn test_get_net_modules_empty() {
-        let netlist = Netlist::new();
-        let modules = netlist.get_net_modules("nonexistent");
-        assert!(modules.is_empty());
-    }
-
-    #[test]
-    fn test_get_module_nets_empty() {
-        let netlist = Netlist::new();
-        let nets = netlist.get_module_nets("nonexistent");
-        assert!(nets.is_empty());
+    fn test_get_module_weight() {
+        let mut nl = Netlist::new();
+        nl.add_module("m1".to_string()).unwrap();
+        assert_eq!(nl.get_module_weight(0), 1);
+        nl.set_module_weight(0, 42);
+        assert_eq!(nl.get_module_weight(0), 42);
     }
 
     #[test]
     fn test_get_max_net_degree() {
-        let mut netlist = Netlist::new();
-        netlist.add_module("m1".to_string()).unwrap();
-        netlist.add_module("m2".to_string()).unwrap();
-        netlist.add_net("n1".to_string()).unwrap();
-        netlist.add_net("n2".to_string()).unwrap();
-        netlist.add_edge("n1", "m1").unwrap();
-        netlist.add_edge("n1", "m2").unwrap();
-        netlist.add_edge("n2", "m1").unwrap();
-        assert_eq!(netlist.get_max_net_degree(), 2);
+        let mut nl = Netlist::new();
+        nl.add_module("m1".to_string()).unwrap();
+        nl.add_module("m2".to_string()).unwrap();
+        nl.add_net("n1".to_string()).unwrap();
+        nl.add_net("n2".to_string()).unwrap();
+        nl.add_edge(0, 0).unwrap();
+        nl.add_edge(0, 1).unwrap();
+        nl.add_edge(1, 0).unwrap();
+        assert_eq!(nl.get_max_net_degree(), 2);
     }
 
     #[test]
     fn test_get_net_weight() {
-        let mut netlist = Netlist::new();
-        netlist.add_net("n1".to_string()).unwrap();
-        assert_eq!(netlist.get_net_weight("n1"), 1);
-        assert_eq!(netlist.get_net_weight("nonexistent"), 1);
+        let mut nl = Netlist::new();
+        nl.add_net("n1".to_string()).unwrap();
+        assert_eq!(nl.get_net_weight(0), 1);
+    }
+
+    #[test]
+    fn test_default_netlist() {
+        let nl: Netlist = Default::default();
+        assert_eq!(nl.num_modules(), 0);
+        assert_eq!(nl.num_nets(), 0);
+    }
+
+    #[test]
+    fn test_get_module_degree_nonexistent() {
+        let nl = Netlist::new();
+        assert_eq!(nl.get_module_degree(0), 0);
+    }
+
+    #[test]
+    fn test_get_net_degree_nonexistent() {
+        let nl = Netlist::new();
+        assert_eq!(nl.get_net_degree(0), 0);
     }
 
     #[test]
     fn test_number_of_nodes() {
-        let mut netlist = Netlist::new();
-        assert_eq!(netlist.number_of_nodes(), 0);
-        netlist.add_module("m1".to_string()).unwrap();
-        assert_eq!(netlist.number_of_nodes(), 1);
-        netlist.add_net("n1".to_string()).unwrap();
-        assert_eq!(netlist.number_of_nodes(), 2);
+        let mut nl = Netlist::new();
+        assert_eq!(nl.number_of_nodes(), 0);
+        nl.add_module("m1".to_string()).unwrap();
+        assert_eq!(nl.number_of_nodes(), 1);
+        nl.add_net("n1".to_string()).unwrap();
+        assert_eq!(nl.number_of_nodes(), 2);
+    }
+
+    #[test]
+    fn test_lookup_by_name() {
+        let mut nl = Netlist::new();
+        nl.add_module("a0".to_string()).unwrap();
+        nl.add_module("a1".to_string()).unwrap();
+        nl.add_net("n0".to_string()).unwrap();
+        assert_eq!(nl.get_module_by_name("a0"), Some(0));
+        assert_eq!(nl.get_module_by_name("a1"), Some(1));
+        assert_eq!(nl.get_net_by_name("n0"), Some(0));
+        assert_eq!(nl.get_module_by_name("nonexistent"), None);
     }
 }
 
@@ -728,25 +693,21 @@ mod quickcheck_impls {
     impl Arbitrary for Netlist {
         fn arbitrary(g: &mut Gen) -> Self {
             let num_modules: usize = Arbitrary::arbitrary(g);
-            let num_modules = num_modules % 20; // Limit size for testing
+            let num_modules = num_modules % 20;
             let num_nets: usize = Arbitrary::arbitrary(g);
-            let num_nets = num_nets % 20; // Limit size for testing
+            let num_nets = num_nets % 20;
 
             let mut builder = NetlistBuilder::new();
 
-            // Add modules
             for i in 0..num_modules {
                 builder = builder.add_module(&format!("m{}", i));
             }
-
-            // Add nets
             for i in 0..num_nets {
                 builder = builder.add_net(&format!("n{}", i));
             }
 
-            // Add some random edges
             let num_edges: usize = Arbitrary::arbitrary(g);
-            let num_edges = num_edges % 50; // Limit edges
+            let num_edges = num_edges % 50;
             for _ in 0..num_edges {
                 let module_idx: usize = Arbitrary::arbitrary(g);
                 let net_idx: usize = Arbitrary::arbitrary(g);
@@ -762,10 +723,8 @@ mod quickcheck_impls {
 
     #[quickcheck]
     fn qc_netlist_arbitrary_is_valid(netlist: Netlist) -> bool {
-        let num_modules = netlist.num_modules();
-        let num_nets = netlist.num_nets();
-        netlist.number_of_nodes() == num_modules + num_nets
-            && netlist.modules.len() == num_modules
-            && netlist.nets.len() == num_nets
+        netlist.number_of_nodes() == netlist.num_modules + netlist.num_nets
+            && netlist.module_names.len() == netlist.num_modules
+            && netlist.net_names.len() == netlist.num_nets
     }
 }

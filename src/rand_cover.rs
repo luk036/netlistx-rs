@@ -17,18 +17,18 @@ use crate::netlist::Netlist;
 /// Ported from C++ `rand_hyper_vertex_cover_trial()` in `rand_cover.hpp`.
 pub fn rand_hyper_vertex_cover_trial<W, R>(
     netlist: &Netlist,
-    weight: &HashMap<String, W>,
-    coverset: &HashSet<String>,
+    weight: &[W],
+    coverset: &HashSet<usize>,
     rng: &mut R,
-) -> (HashSet<String>, W)
+) -> (HashSet<usize>, W)
 where
     W: Copy + Into<f64> + std::ops::Add<Output = W> + std::cmp::PartialOrd + Default,
     R: rand::RngExt,
 {
-    let mut soln: HashSet<String> = coverset.iter().cloned().collect();
-    let mut added_order: Vec<String> = Vec::new();
+    let mut soln: HashSet<usize> = coverset.iter().cloned().collect();
+    let mut added_order: Vec<usize> = Vec::new();
 
-    for net in &netlist.nets {
+    for net in netlist.net_indices() {
         let modules = netlist.get_net_modules(net);
         if modules.is_empty() {
             continue;
@@ -39,7 +39,7 @@ where
             continue;
         }
 
-        let total_inv: f64 = modules.iter().map(|m| 1.0 / weight[m].into()).sum();
+        let total_inv: f64 = modules.iter().map(|m| 1.0 / weight[*m].into()).sum();
 
         if total_inv <= 0.0 {
             continue;
@@ -47,9 +47,9 @@ where
 
         let r: f64 = rng.random();
         let mut cumulative = 0.0;
-        let mut chosen = &modules[0];
+        let mut chosen = modules[0];
 
-        for m in &modules {
+        for &m in &modules {
             cumulative += 1.0 / weight[m].into() / total_inv;
             if r < cumulative {
                 chosen = m;
@@ -57,33 +57,33 @@ where
             }
         }
 
-        soln.insert(chosen.clone());
-        added_order.push(chosen.clone());
+        soln.insert(chosen);
+        added_order.push(chosen);
     }
 
-    for vtx in added_order.iter().rev() {
-        soln.remove(vtx);
+    for &vtx in added_order.iter().rev() {
+        soln.remove(&vtx);
         let mut valid = true;
-        for net in &netlist.nets {
+        for net in netlist.net_indices() {
             let modules = netlist.get_net_modules(net);
             if modules.is_empty() {
                 continue;
             }
-            let net_covered = modules.iter().any(|m| soln.contains(m));
+            let net_covered = modules.iter().any(|&m| soln.contains(&m));
             if !net_covered {
                 valid = false;
                 break;
             }
         }
         if !valid {
-            soln.insert(vtx.clone());
+            soln.insert(vtx);
         }
     }
 
-    let total_cost: W = soln
-        .iter()
-        .map(|v| weight[v])
-        .fold(W::default(), |acc, w| acc + w);
+    let mut total_cost: W = W::default();
+    for &v in &soln {
+        total_cost = total_cost + weight[v];
+    }
 
     (soln, total_cost)
 }
@@ -93,10 +93,10 @@ where
 /// Ported from C++ `rand_hyper_vertex_cover()` in `rand_cover.hpp`.
 pub fn rand_hyper_vertex_cover<W>(
     netlist: &Netlist,
-    weight: &HashMap<String, W>,
+    weight: &[W],
     seed: u64,
-    coverset: &HashSet<String>,
-) -> (HashSet<String>, W)
+    coverset: &HashSet<usize>,
+) -> (HashSet<usize>, W)
 where
     W: Copy + Into<f64> + std::ops::Add<Output = W> + std::cmp::PartialOrd + Default,
 {
@@ -114,17 +114,17 @@ where
 #[cfg(feature = "rayon")]
 pub fn rand_hyper_vertex_cover_mt<W>(
     netlist: &Netlist,
-    weight: &HashMap<String, W>,
+    weight: &[W],
     num_trials: usize,
     seed: u64,
-    coverset: &HashSet<String>,
-) -> (HashSet<String>, W)
+    coverset: &HashSet<usize>,
+) -> (HashSet<usize>, W)
 where
     W: Copy + Into<f64> + std::ops::Add<Output = W> + std::cmp::PartialOrd + Default + Send + Sync,
 {
     use rayon::prelude::*;
 
-    let results: Vec<(HashSet<String>, W)> = (0..num_trials)
+    let results: Vec<(HashSet<usize>, W)> = (0..num_trials)
         .into_par_iter()
         .map(|t| {
             let mut rng = rand::rngs::StdRng::seed_from_u64(seed + t as u64);
@@ -143,15 +143,15 @@ where
 /// Runs `num_trials` independent trials sequentially and returns the best cover.
 pub fn rand_hyper_vertex_cover_mt_seq<W>(
     netlist: &Netlist,
-    weight: &HashMap<String, W>,
+    weight: &[W],
     num_trials: usize,
     seed: u64,
-    coverset: &HashSet<String>,
-) -> (HashSet<String>, W)
+    coverset: &HashSet<usize>,
+) -> (HashSet<usize>, W)
 where
     W: Copy + Into<f64> + std::ops::Add<Output = W> + std::cmp::PartialOrd + Default,
 {
-    let mut best: Option<(HashSet<String>, W)> = None;
+    let mut best: Option<(HashSet<usize>, W)> = None;
 
     for t in 0..num_trials {
         let mut rng = rand::rngs::StdRng::seed_from_u64(seed + t as u64);
@@ -248,22 +248,19 @@ mod tests {
     use super::*;
     use petgraph::graph::UnGraph;
 
-    fn create_weighted_graph() -> (Netlist, HashMap<String, i32>) {
+    fn create_weighted_graph() -> (Netlist, Vec<i32>) {
         let mut netlist = Netlist::new();
         netlist.add_module("v0".to_string()).unwrap();
         netlist.add_module("v1".to_string()).unwrap();
-        netlist.add_module("v2".to_string()).unwrap();
-        netlist.add_net("n0".to_string()).unwrap();
-        netlist.add_net("n1".to_string()).unwrap();
-        netlist.add_edge("n0", "v1").unwrap();
-        netlist.add_edge("n0", "v2").unwrap();
-        netlist.add_edge("n1", "v0").unwrap();
-        netlist.add_edge("n1", "v1").unwrap();
+        let v2 = netlist.add_module("v2".to_string()).unwrap();
+        let n0 = netlist.add_net("n0".to_string()).unwrap();
+        let n1 = netlist.add_net("n1".to_string()).unwrap();
+        netlist.add_edge(n0, 1usize).unwrap();
+        netlist.add_edge(n0, v2).unwrap();
+        netlist.add_edge(n1, 0usize).unwrap();
+        netlist.add_edge(n1, 1usize).unwrap();
 
-        let mut weight = HashMap::new();
-        weight.insert("v0".to_string(), 1);
-        weight.insert("v1".to_string(), 1);
-        weight.insert("v2".to_string(), 1);
+        let weight = vec![1, 1, 1];
         (netlist, weight)
     }
 
@@ -272,9 +269,9 @@ mod tests {
         let (hyprgraph, weight) = create_weighted_graph();
         let coverset = HashSet::new();
         let (soln, cost) = rand_hyper_vertex_cover(&hyprgraph, &weight, 42, &coverset);
-        for net in &hyprgraph.nets {
+        for net in hyprgraph.net_indices() {
             let modules = hyprgraph.get_net_modules(net);
-            let covered = modules.iter().any(|m| soln.contains(m));
+            let covered = modules.iter().any(|&m| soln.contains(&m));
             assert!(covered, "Net {} is not covered", net);
         }
         assert!(cost >= 1);
@@ -283,7 +280,7 @@ mod tests {
     #[test]
     fn test_rand_hyper_vertex_cover_empty() {
         let hyprgraph = Netlist::new();
-        let weight: HashMap<String, i32> = HashMap::new();
+        let weight: Vec<i32> = Vec::new();
         let coverset = HashSet::new();
         let (soln, cost) = rand_hyper_vertex_cover(&hyprgraph, &weight, 0, &coverset);
         assert!(soln.is_empty());
@@ -293,18 +290,15 @@ mod tests {
     #[test]
     fn test_rand_hyper_vertex_cover_deterministic() {
         let mut netlist = Netlist::new();
-        netlist.add_module("v0".to_string()).unwrap();
-        netlist.add_module("v1".to_string()).unwrap();
-        netlist.add_module("v2".to_string()).unwrap();
-        netlist.add_net("n0".to_string()).unwrap();
-        netlist.add_edge("n0", "v0").unwrap();
-        netlist.add_edge("n0", "v1").unwrap();
-        netlist.add_edge("n0", "v2").unwrap();
+        let v0 = netlist.add_module("v0".to_string()).unwrap();
+        let v1 = netlist.add_module("v1".to_string()).unwrap();
+        let v2 = netlist.add_module("v2".to_string()).unwrap();
+        let n0 = netlist.add_net("n0".to_string()).unwrap();
+        netlist.add_edge(n0, v0).unwrap();
+        netlist.add_edge(n0, v1).unwrap();
+        netlist.add_edge(n0, v2).unwrap();
 
-        let mut weight = HashMap::new();
-        weight.insert("v0".to_string(), 1);
-        weight.insert("v1".to_string(), 1);
-        weight.insert("v2".to_string(), 1);
+        let weight = vec![1, 1, 1];
 
         let coverset = HashSet::new();
         let (soln1, cost1) = rand_hyper_vertex_cover(&netlist, &weight, 99, &coverset);
@@ -318,9 +312,9 @@ mod tests {
         let (hyprgraph, weight) = create_weighted_graph();
         let coverset = HashSet::new();
         let (soln, cost) = rand_hyper_vertex_cover_mt_seq(&hyprgraph, &weight, 16, 42, &coverset);
-        for net in &hyprgraph.nets {
+        for net in hyprgraph.net_indices() {
             let modules = hyprgraph.get_net_modules(net);
-            let covered = modules.iter().any(|m| soln.contains(m));
+            let covered = modules.iter().any(|&m| soln.contains(&m));
             assert!(covered, "Net {} is not covered", net);
         }
         assert!(cost >= 1);
@@ -329,20 +323,18 @@ mod tests {
     #[test]
     fn test_rand_hyper_vertex_cover_mt_seq_weighted() {
         let mut netlist = Netlist::new();
-        netlist.add_module("v0".to_string()).unwrap();
-        netlist.add_module("v1".to_string()).unwrap();
-        netlist.add_net("n0".to_string()).unwrap();
-        netlist.add_edge("n0", "v0").unwrap();
-        netlist.add_edge("n0", "v1").unwrap();
+        let v0 = netlist.add_module("v0".to_string()).unwrap();
+        let v1 = netlist.add_module("v1".to_string()).unwrap();
+        let n0 = netlist.add_net("n0".to_string()).unwrap();
+        netlist.add_edge(n0, v0).unwrap();
+        netlist.add_edge(n0, v1).unwrap();
 
-        let mut weight = HashMap::new();
-        weight.insert("v0".to_string(), 100);
-        weight.insert("v1".to_string(), 1);
+        let weight = vec![100, 1];
 
         let coverset = HashSet::new();
         let (soln, cost) = rand_hyper_vertex_cover_mt_seq(&netlist, &weight, 128, 7, &coverset);
         assert_eq!(soln.len(), 1);
-        assert!(soln.contains("v1"));
+        assert!(soln.contains(&1));
         assert_eq!(cost, 1);
     }
 
@@ -393,8 +385,7 @@ mod tests {
         let mut hyprgraph = Netlist::new();
         hyprgraph.add_module("m1".to_string()).unwrap();
         hyprgraph.add_net("isolated".to_string()).unwrap();
-        let mut weight = HashMap::new();
-        weight.insert("m1".to_string(), 1i32);
+        let weight = vec![1i32];
         let coverset = HashSet::new();
         let (soln, cost) = rand_hyper_vertex_cover(&hyprgraph, &weight, 42, &coverset);
         assert_eq!(cost, 0);
@@ -417,9 +408,9 @@ mod tests {
         let (hyprgraph, weight) = create_weighted_graph();
         let coverset = HashSet::new();
         let (soln, cost) = rand_hyper_vertex_cover_mt(&hyprgraph, &weight, 8, 42, &coverset);
-        for net in &hyprgraph.nets {
+        for net in hyprgraph.net_indices() {
             let modules = hyprgraph.get_net_modules(net);
-            let covered = modules.iter().any(|m| soln.contains(m));
+            let covered = modules.iter().any(|&m| soln.contains(&m));
             assert!(covered, "Net {} is not covered", net);
         }
         assert!(cost >= 1);

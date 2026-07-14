@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::collections::HashSet;
 
 use crate::netlist::Netlist;
@@ -13,28 +12,24 @@ use crate::netlist::Netlist;
 ///
 /// Generic framework that works with any violate function that produces
 /// sets of vertices, a weight function for vertices, and a solution set.
-/// The `coverset` parameter is the current set of covered vertices used
-/// to determine which sets are violated.
+/// The `soln` parameter is the current solution set modified in-place.
 pub fn pd_cover<F, W>(
     mut violate: F,
-    weight: &HashMap<String, W>,
-    soln: &mut HashSet<String>,
-    coverset: &HashSet<String>,
-) -> (HashSet<String>, W)
+    weight: &[W],
+    soln: &mut HashSet<usize>,
+) -> (HashSet<usize>, W)
 where
-    F: FnMut(&HashSet<String>) -> Vec<Vec<String>>,
+    F: FnMut(&HashSet<usize>) -> Vec<Vec<usize>>,
     W: Copy
         + std::ops::Add<Output = W>
         + std::ops::Sub<Output = W>
         + std::cmp::PartialOrd
         + Default,
 {
-    let mut gap: HashMap<String, W> = HashMap::new();
-    let mut added_order: Vec<String> = Vec::new();
+    let mut gap: Vec<W> = weight.to_vec();
+    let mut added_order: Vec<usize> = Vec::new();
 
-    let current_coverset: HashSet<String> = coverset.iter().cloned().collect();
-
-    for violate_set in violate(&current_coverset) {
+    for violate_set in violate(soln) {
         if violate_set.is_empty() {
             continue;
         }
@@ -42,23 +37,22 @@ where
         let min_vtx = violate_set
             .iter()
             .min_by(|&v1, &v2| {
-                let g1 = gap.get(v1).copied().unwrap_or(weight[v1]);
-                let g2 = gap.get(v2).copied().unwrap_or(weight[v2]);
+                let g1 = gap[*v1];
+                let g2 = gap[*v2];
                 g1.partial_cmp(&g2).unwrap_or(std::cmp::Ordering::Equal)
             })
-            .cloned()
+            .copied()
             .expect("violate_set should not be empty");
 
-        let min_val = gap.get(&min_vtx).copied().unwrap_or(weight[&min_vtx]);
+        let min_val = gap[min_vtx];
 
         if !soln.contains(&min_vtx) {
-            soln.insert(min_vtx.clone());
-            added_order.push(min_vtx.clone());
+            soln.insert(min_vtx);
+            added_order.push(min_vtx);
         }
 
         for vtx in &violate_set {
-            let entry = gap.entry(vtx.clone()).or_insert(weight[vtx]);
-            *entry = *entry - min_val;
+            gap[*vtx] = gap[*vtx] - min_val;
         }
     }
 
@@ -67,13 +61,13 @@ where
         let violates = violate(soln);
         let any_violated = violates.iter().any(|s| !s.is_empty());
         if any_violated {
-            soln.insert(vtx.clone());
+            soln.insert(*vtx);
         }
     }
 
     let final_primal_cost: W = soln
         .iter()
-        .map(|vtx| weight[vtx])
+        .map(|vtx| weight[*vtx])
         .fold(W::default(), |acc, w| acc + w);
 
     (soln.clone(), final_primal_cost)
@@ -84,9 +78,9 @@ where
 /// Ported from C++ `min_hyper_vertex_cover()` in `cover.hpp`.
 pub fn min_hyper_vertex_cover<W>(
     netlist: &Netlist,
-    weight: &HashMap<String, W>,
-    coverset: &mut HashSet<String>,
-) -> (HashSet<String>, W)
+    weight: &[W],
+    coverset: &mut HashSet<usize>,
+) -> (HashSet<usize>, W)
 where
     W: Copy
         + std::ops::Add<Output = W>
@@ -94,9 +88,9 @@ where
         + std::cmp::PartialOrd
         + Default,
 {
-    let violate_fn = |current_soln: &HashSet<String>| -> Vec<Vec<String>> {
+    let violate_fn = |current_soln: &HashSet<usize>| -> Vec<Vec<usize>> {
         let mut result = Vec::new();
-        for net in &netlist.nets {
+        for net in netlist.net_indices() {
             let modules = netlist.get_net_modules(net);
             let covered = modules.iter().any(|m| current_soln.contains(m));
             if !covered {
@@ -106,15 +100,11 @@ where
         result
     };
 
-    let initial_coverset = coverset.clone();
-    pd_cover(violate_fn, weight, coverset, &initial_coverset)
+    pd_cover(violate_fn, weight, coverset)
 }
 
 /// Convenience overload that creates an empty coverset.
-pub fn min_hyper_vertex_cover_new<W>(
-    netlist: &Netlist,
-    weight: &HashMap<String, W>,
-) -> (HashSet<String>, W)
+pub fn min_hyper_vertex_cover_new<W>(netlist: &Netlist, weight: &[W]) -> (HashSet<usize>, W)
 where
     W: Copy
         + std::ops::Add<Output = W>
@@ -136,25 +126,21 @@ mod tests {
         netlist.add_module("v0".to_string()).unwrap();
         netlist.add_module("v1".to_string()).unwrap();
         netlist.add_module("v2".to_string()).unwrap();
-        netlist.add_net("n0".to_string()).unwrap();
-        netlist.add_net("n1".to_string()).unwrap();
-        netlist.add_edge("n0", "v1").unwrap();
-        netlist.add_edge("n0", "v2").unwrap();
-        netlist.add_edge("n1", "v0").unwrap();
-        netlist.add_edge("n1", "v1").unwrap();
+        let n0 = netlist.add_net("n0".to_string()).unwrap();
+        let n1 = netlist.add_net("n1".to_string()).unwrap();
+        netlist.add_edge(n0, 1).unwrap();
+        netlist.add_edge(n0, 2).unwrap();
+        netlist.add_edge(n1, 0).unwrap();
+        netlist.add_edge(n1, 1).unwrap();
         netlist
     }
 
-    fn default_weight(netlist: &Netlist) -> HashMap<String, i32> {
-        let mut w = HashMap::new();
-        for m in &netlist.modules {
-            w.insert(m.clone(), 1);
-        }
-        w
+    fn default_weight(netlist: &Netlist) -> Vec<i32> {
+        vec![1; netlist.num_modules()]
     }
 
-    fn assert_all_nets_covered(hyprgraph: &Netlist, covered: &HashSet<String>) {
-        for net in &hyprgraph.nets {
+    fn assert_all_nets_covered(hyprgraph: &Netlist, covered: &HashSet<usize>) {
+        for net in hyprgraph.net_indices() {
             let modules = hyprgraph.get_net_modules(net);
             let net_covered = modules.iter().any(|m| covered.contains(m));
             assert!(net_covered, "Net {} is not covered", net);
@@ -185,7 +171,7 @@ mod tests {
     #[test]
     fn test_min_hyper_vertex_cover_empty() {
         let hyprgraph = Netlist::new();
-        let weight: HashMap<String, i32> = HashMap::new();
+        let weight: Vec<i32> = Vec::new();
         let mut coverset = HashSet::new();
         let (covered, cost) = min_hyper_vertex_cover(&hyprgraph, &weight, &mut coverset);
         assert!(covered.is_empty());
@@ -196,9 +182,9 @@ mod tests {
     fn test_min_hyper_vertex_cover_with_coverset() {
         let hyprgraph = create_simple_hypergraph();
         let weight = default_weight(&hyprgraph);
-        let mut coverset: HashSet<String> = [("v0".to_string())].iter().cloned().collect();
+        let mut coverset: HashSet<usize> = [0].iter().copied().collect();
         let (covered, _cost) = min_hyper_vertex_cover(&hyprgraph, &weight, &mut coverset);
         assert_all_nets_covered(&hyprgraph, &covered);
-        assert!(covered.contains("v0"));
+        assert!(covered.contains(&0));
     }
 }

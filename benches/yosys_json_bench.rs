@@ -12,13 +12,15 @@ fn create_yosys_json_file(num_cells: usize, num_ports: usize) -> tempfile::Named
     let mut cells = serde_json::Map::new();
     for i in 0..num_cells {
         let mut conn = serde_json::Map::new();
-        let a_nets: Vec<u32> =
-            (0..3).map(|j| ((i * 3 + j) as u32) % num_nets).collect();
+        let a_nets: Vec<u32> = (0..3).map(|j| ((i * 3 + j) as u32) % num_nets).collect();
         let y_net = ((i * 3 + 3) as u32) % num_nets;
         conn.insert(
             "A".into(),
             serde_json::Value::Array(
-                a_nets.iter().map(|&n| serde_json::Value::Number(n.into())).collect(),
+                a_nets
+                    .iter()
+                    .map(|&n| serde_json::Value::Number(n.into()))
+                    .collect(),
             ),
         );
         conn.insert(
@@ -35,7 +37,10 @@ fn create_yosys_json_file(num_cells: usize, num_ports: usize) -> tempfile::Named
     let mut ports = serde_json::Map::new();
     for i in 0..num_ports {
         let mut port = serde_json::Map::new();
-        port.insert("direction".into(), serde_json::Value::String("input".into()));
+        port.insert(
+            "direction".into(),
+            serde_json::Value::String("input".into()),
+        );
         port.insert(
             "bits".into(),
             serde_json::Value::Array(vec![serde_json::Value::Number((i as u32).into())]),
@@ -66,7 +71,11 @@ fn bench_yosys_json_dom_vs_sax(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("yosys_json_parse_synthetic");
 
-    for (label, path) in [("small_100", small.path()), ("med_500", med.path()), ("large_2k", large.path())] {
+    for (label, path) in [
+        ("small_100", small.path()),
+        ("med_500", med.path()),
+        ("large_2k", large.path()),
+    ] {
         group.bench_with_input(BenchmarkId::new("dom", label), path, |b, p| {
             b.iter(|| black_box(read_yosys_json(p).unwrap()));
         });
@@ -79,7 +88,10 @@ fn bench_yosys_json_dom_vs_sax(c: &mut Criterion) {
 
     // --- Real Yosys netlist file ---
     let real_path = Path::new("yosys_testcases/sphere_netlist.json");
-    if real_path.exists() && read_yosys_json(real_path).is_ok() && read_yosys_json_sax(real_path).is_ok() {
+    if real_path.exists()
+        && read_yosys_json(real_path).is_ok()
+        && read_yosys_json_sax(real_path).is_ok()
+    {
         let mut group = c.benchmark_group("yosys_json_parse_real");
         group.bench_with_input(BenchmarkId::new("dom", "sphere"), real_path, |b, p| {
             b.iter(|| black_box(read_yosys_json(p).unwrap()));
@@ -102,7 +114,7 @@ fn test_sax_matches_dom_across_sizes() {
         assert_eq!(dom.num_nets(), sax.num_nets());
         assert_eq!(dom.num_pads, sax.num_pads);
         assert_eq!(dom.number_of_nodes(), sax.number_of_nodes());
-        assert_eq!(dom.grph.edge_count(), sax.grph.edge_count());
+        assert_eq!(dom.gr.edge_count(), sax.gr.edge_count());
     }
 }
 

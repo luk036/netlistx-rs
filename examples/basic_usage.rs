@@ -14,20 +14,20 @@ fn main() {
     netlist.add_module("NOT".to_string()).unwrap();
     netlist.add_module("FF".to_string()).unwrap();
 
-    netlist.add_net("net1".to_string()).unwrap();
-    netlist.add_net("net2".to_string()).unwrap();
-    netlist.add_net("clk".to_string()).unwrap();
+    let n1 = netlist.add_net("net1".to_string()).unwrap();
+    let n2 = netlist.add_net("net2".to_string()).unwrap();
+    let clk = netlist.add_net("clk".to_string()).unwrap();
 
-    netlist.add_edge("net1", "AND").unwrap();
-    netlist.add_edge("net1", "OR").unwrap();
-    netlist.add_edge("net2", "OR").unwrap();
-    netlist.add_edge("net2", "NOT").unwrap();
-    netlist.add_edge("clk", "FF").unwrap();
+    netlist.add_edge(n1, 0).unwrap(); // net1-AND
+    netlist.add_edge(n1, 1).unwrap(); // net1-OR
+    netlist.add_edge(n2, 1).unwrap(); // net2-OR
+    netlist.add_edge(n2, 2).unwrap(); // net2-NOT
+    netlist.add_edge(clk, 3).unwrap(); // clk-FF
 
     println!("Created netlist:");
     println!("  Modules: {}", netlist.num_modules());
     println!("  Nets: {}", netlist.num_nets());
-    println!("  Edges: {}", netlist.grph.edge_count());
+    println!("  Edges: {}", netlist.gr.edge_count());
 
     let stats = NetlistStats::analyze(&netlist);
     println!("\nStatistics:");
@@ -37,7 +37,11 @@ fn main() {
     println!("  Pin count: {}", stats.num_pins);
 
     println!("\nModule degrees:");
-    for module in &netlist.modules {
-        println!("  {}: {}", module, netlist.get_module_degree(module));
+    for i in netlist.module_indices() {
+        println!(
+            "  {}: {}",
+            netlist.module_names[i],
+            netlist.get_module_degree(i)
+        );
     }
 }

@@ -51,7 +51,6 @@ run-example EXAMPLE:
 examples:
     cargo run --example basic_usage
     cargo run --example builder_pattern
-    cargo run --example partitioning_example
 
 # Clean build artifacts
 clean:

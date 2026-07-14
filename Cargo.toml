@@ -23,7 +23,7 @@ serde_json = "1.0.150"
 
 [features]
 default = []
-serde = ["dep:serde", "indexmap/serde", "petgraph/serde"]
+serde = ["indexmap/serde", "petgraph/serde"]
 rayon = ["dep:rayon"]
 cuda = ["dep:cudarc"]
 quickcheck = ["dep:quickcheck"]
@@ -31,7 +31,6 @@ quickcheck = ["dep:quickcheck"]
 [dependencies.serde]
 version = "1.0"
 features = ["derive"]
-optional = true
 
 [dependencies.rayon]
 version = "1.8"
@@ -57,6 +56,14 @@ netlistx-rs = { path = ".", features = ["quickcheck"] }
 
 [[bench]]
 name = "yosys_json_bench"
+harness = false
+
+[[bench]]
+name = "netlist_bench"
+harness = false
+
+[[bench]]
+name = "netlist_benchmark"
 harness = false
 
 [profile.bench]

@@ -22,7 +22,6 @@ fn main() {
         .add_edge("net3", "cell_c")
         .add_edge("net3", "cell_d")
         .with_pads(4)
-        .with_cost_model(1)
         .build()
         .unwrap();
 

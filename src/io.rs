@@ -188,17 +188,22 @@ fn read_netd_format<P: AsRef<Path>>(path: P) -> IoResult<Netlist> {
         }
 
         let net_name = format!("n{}", edge_idx - 1 - num_modules);
-        if !netlist.has_net(&net_name) {
+        if netlist.get_net_by_name(&net_name).is_none() {
             let _ = netlist.add_net(net_name.clone());
         }
 
         let mod_name = format!("m{}", node);
-        let _ = netlist.add_edge(&net_name, &mod_name);
+        if let (Some(net_idx), Some(mod_idx)) = (
+            netlist.get_net_by_name(&net_name),
+            netlist.get_module_by_name(&mod_name),
+        ) {
+            let _ = netlist.add_edge(net_idx, mod_idx);
+        }
 
         pin_count += 1;
     }
 
-    netlist.num_pads = (num_modules - pad_offset - 1) as i32;
+    netlist.num_pads = (num_modules - pad_offset - 1) as usize;
     Ok(netlist)
 }
 
@@ -257,8 +262,8 @@ pub fn read_are<P: AsRef<Path>>(netlist: &mut Netlist, path: P) -> IoResult<()> 
     for (i, w) in module_weights.iter().enumerate() {
         if i < num_modules {
             let mod_name = format!("m{}", i);
-            if netlist.has_module(&mod_name) {
-                netlist.set_module_weight(&mod_name, *w as i32);
+            if let Some(idx) = netlist.get_module_by_name(&mod_name) {
+                netlist.set_module_weight(idx, *w as i32);
             }
         }
     }
@@ -324,12 +329,16 @@ fn read_hmetis_format<P: AsRef<Path>>(path: P) -> IoResult<Netlist> {
         let net_name = format!("n{}", net_idx);
         let _ = netlist.add_net(net_name.clone());
 
-        for token in trimmed.split_whitespace() {
-            if let Ok(v) = token.parse::<usize>() {
-                let v_idx = if v > 0 { v - 1 } else { v };
-                if v_idx < num_vertices {
-                    let mod_name = format!("m{}", v_idx);
-                    let _ = netlist.add_edge(&net_name, &mod_name);
+        if let Some(net_idx_val) = netlist.get_net_by_name(&net_name) {
+            for token in trimmed.split_whitespace() {
+                if let Ok(v) = token.parse::<usize>() {
+                    let v_idx = if v > 0 { v - 1 } else { v };
+                    if v_idx < num_vertices {
+                        let mod_name = format!("m{}", v_idx);
+                        if let Some(mod_idx) = netlist.get_module_by_name(&mod_name) {
+                            let _ = netlist.add_edge(net_idx_val, mod_idx);
+                        }
+                    }
                 }
             }
         }
@@ -505,7 +514,12 @@ pub fn read_yosys_json<P: AsRef<Path>>(path: P) -> IoResult<Netlist> {
                                 let n = n as u32;
                                 if nets_list.contains(&n) {
                                     let net_name = n.to_string();
-                                    let _ = netlist.add_edge(&net_name, cell_name);
+                                    if let (Some(net_idx), Some(cell_idx)) = (
+                                        netlist.get_net_by_name(&net_name),
+                                        netlist.get_module_by_name(cell_name),
+                                    ) {
+                                        let _ = netlist.add_edge(net_idx, cell_idx);
+                                    }
                                 }
                             }
                         }
@@ -526,7 +540,12 @@ pub fn read_yosys_json<P: AsRef<Path>>(path: P) -> IoResult<Netlist> {
                         if nets_list.contains(&n) {
                             let net_name = n.to_string();
                             let port_mod = format!("PORT_{}", port_name);
-                            let _ = netlist.add_edge(&net_name, &port_mod);
+                            if let (Some(net_idx), Some(mod_idx)) = (
+                                netlist.get_net_by_name(&net_name),
+                                netlist.get_module_by_name(&port_mod),
+                            ) {
+                                let _ = netlist.add_edge(net_idx, mod_idx);
+                            }
                         }
                     }
                 }
@@ -535,20 +554,27 @@ pub fn read_yosys_json<P: AsRef<Path>>(path: P) -> IoResult<Netlist> {
     }
 
     // 6. Set metadata
-    netlist.num_pads = num_ports as i32;
+    netlist.num_pads = num_ports;
 
     // Set module weights: cells = 1, ports = 0
     for cell_name in &cell_names {
-        netlist.set_module_weight(cell_name, 1);
+        if let Some(idx) = netlist.get_module_by_name(cell_name) {
+            netlist.set_module_weight(idx, 1);
+        }
     }
     for port_name in &port_names {
         let port_mod = format!("PORT_{}", port_name);
-        netlist.set_module_weight(&port_mod, 0);
+        if let Some(idx) = netlist.get_module_by_name(&port_mod) {
+            netlist.set_module_weight(idx, 0);
+        }
     }
 
     // Mark ports as fixed
     for port_name in &port_names {
-        netlist.module_fixed.insert(format!("PORT_{}", port_name));
+        let port_mod = format!("PORT_{}", port_name);
+        if let Some(idx) = netlist.get_module_by_name(&port_mod) {
+            netlist.module_fixed.insert(idx);
+        }
     }
     netlist.has_fixed_modules = num_ports > 0;
 
@@ -608,7 +634,10 @@ struct NetnamesSeed<'a> {
 impl<'de, 'a> DeserializeSeed<'de> for TopSeed<'a> {
     type Value = ();
 
-    fn deserialize<D>(self, deserializer: D) -> Result<<Self as DeserializeSeed<'de>>::Value, D::Error>
+    fn deserialize<D>(
+        self,
+        deserializer: D,
+    ) -> Result<<Self as DeserializeSeed<'de>>::Value, D::Error>
     where
         D: Deserializer<'de>,
     {
@@ -648,7 +677,10 @@ impl<'de, 'a> DeserializeSeed<'de> for TopSeed<'a> {
 impl<'de, 'a> DeserializeSeed<'de> for ModulesSeed<'a> {
     type Value = ();
 
-    fn deserialize<D>(self, deserializer: D) -> Result<<Self as DeserializeSeed<'de>>::Value, D::Error>
+    fn deserialize<D>(
+        self,
+        deserializer: D,
+    ) -> Result<<Self as DeserializeSeed<'de>>::Value, D::Error>
     where
         D: Deserializer<'de>,
     {
@@ -681,7 +713,10 @@ impl<'de, 'a> DeserializeSeed<'de> for ModulesSeed<'a> {
 impl<'de, 'a> DeserializeSeed<'de> for ModuleSeed<'a> {
     type Value = ();
 
-    fn deserialize<D>(self, deserializer: D) -> Result<<Self as DeserializeSeed<'de>>::Value, D::Error>
+    fn deserialize<D>(
+        self,
+        deserializer: D,
+    ) -> Result<<Self as DeserializeSeed<'de>>::Value, D::Error>
     where
         D: Deserializer<'de>,
     {
@@ -727,7 +762,10 @@ impl<'de, 'a> DeserializeSeed<'de> for ModuleSeed<'a> {
 impl<'de, 'a> DeserializeSeed<'de> for CellsSeed<'a> {
     type Value = ();
 
-    fn deserialize<D>(self, deserializer: D) -> Result<<Self as DeserializeSeed<'de>>::Value, D::Error>
+    fn deserialize<D>(
+        self,
+        deserializer: D,
+    ) -> Result<<Self as DeserializeSeed<'de>>::Value, D::Error>
     where
         D: Deserializer<'de>,
     {
@@ -765,7 +803,10 @@ impl<'de, 'a> DeserializeSeed<'de> for CellsSeed<'a> {
 impl<'de, 'a> DeserializeSeed<'de> for CellSeed<'a> {
     type Value = ();
 
-    fn deserialize<D>(self, deserializer: D) -> Result<<Self as DeserializeSeed<'de>>::Value, D::Error>
+    fn deserialize<D>(
+        self,
+        deserializer: D,
+    ) -> Result<<Self as DeserializeSeed<'de>>::Value, D::Error>
     where
         D: Deserializer<'de>,
     {
@@ -812,7 +853,10 @@ impl<'de, 'a> DeserializeSeed<'de> for CellSeed<'a> {
 impl<'de, 'a> DeserializeSeed<'de> for ConnectionsSeed<'a> {
     type Value = ();
 
-    fn deserialize<D>(self, deserializer: D) -> Result<<Self as DeserializeSeed<'de>>::Value, D::Error>
+    fn deserialize<D>(
+        self,
+        deserializer: D,
+    ) -> Result<<Self as DeserializeSeed<'de>>::Value, D::Error>
     where
         D: Deserializer<'de>,
     {
@@ -841,7 +885,10 @@ impl<'de, 'a> DeserializeSeed<'de> for ConnectionsSeed<'a> {
                     impl<'de, 'a> DeserializeSeed<'de> for ConnArraySeed<'a> {
                         type Value = ();
 
-                        fn deserialize<D>(self, deserializer: D) -> Result<<Self as DeserializeSeed<'de>>::Value, D::Error>
+                        fn deserialize<D>(
+                            self,
+                            deserializer: D,
+                        ) -> Result<<Self as DeserializeSeed<'de>>::Value, D::Error>
                         where
                             D: Deserializer<'de>,
                         {
@@ -853,7 +900,10 @@ impl<'de, 'a> DeserializeSeed<'de> for ConnectionsSeed<'a> {
                             impl<'de, 'a> Visitor<'de> for ConnArrayVisitor<'a> {
                                 type Value = ();
 
-                                fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                                fn expecting(
+                                    &self,
+                                    f: &mut std::fmt::Formatter,
+                                ) -> std::fmt::Result {
                                     f.write_str("array of net IDs")
                                 }
 
@@ -861,7 +911,9 @@ impl<'de, 'a> DeserializeSeed<'de> for ConnectionsSeed<'a> {
                                 where
                                     A: SeqAccess<'de>,
                                 {
-                                    while let Some(elem) = seq.next_element::<serde_json::Value>()? {
+                                    while let Some(elem) =
+                                        seq.next_element::<serde_json::Value>()?
+                                    {
                                         if let Some(n) = elem.as_u64() {
                                             let n = n as u32;
                                             self.data.all_net_ids.insert(n);
@@ -898,7 +950,10 @@ impl<'de, 'a> DeserializeSeed<'de> for ConnectionsSeed<'a> {
 impl<'de, 'a> DeserializeSeed<'de> for PortsSeed<'a> {
     type Value = ();
 
-    fn deserialize<D>(self, deserializer: D) -> Result<<Self as DeserializeSeed<'de>>::Value, D::Error>
+    fn deserialize<D>(
+        self,
+        deserializer: D,
+    ) -> Result<<Self as DeserializeSeed<'de>>::Value, D::Error>
     where
         D: Deserializer<'de>,
     {
@@ -935,7 +990,10 @@ impl<'de, 'a> DeserializeSeed<'de> for PortsSeed<'a> {
 impl<'de, 'a> DeserializeSeed<'de> for PortSeed<'a> {
     type Value = ();
 
-    fn deserialize<D>(self, deserializer: D) -> Result<<Self as DeserializeSeed<'de>>::Value, D::Error>
+    fn deserialize<D>(
+        self,
+        deserializer: D,
+    ) -> Result<<Self as DeserializeSeed<'de>>::Value, D::Error>
     where
         D: Deserializer<'de>,
     {
@@ -965,7 +1023,10 @@ impl<'de, 'a> DeserializeSeed<'de> for PortSeed<'a> {
                         impl<'de, 'a> DeserializeSeed<'de> for PortBitsSeed<'a> {
                             type Value = ();
 
-                            fn deserialize<D>(self, deserializer: D) -> Result<<Self as DeserializeSeed<'de>>::Value, D::Error>
+                            fn deserialize<D>(
+                                self,
+                                deserializer: D,
+                            ) -> Result<<Self as DeserializeSeed<'de>>::Value, D::Error>
                             where
                                 D: Deserializer<'de>,
                             {
@@ -994,9 +1055,7 @@ impl<'de, 'a> DeserializeSeed<'de> for PortSeed<'a> {
                                             bits.push(n);
                                             self.data.all_net_ids.insert(n);
                                         }
-                                        self.data
-                                            .port_bits
-                                            .insert(self.port_name.clone(), bits);
+                                        self.data.port_bits.insert(self.port_name.clone(), bits);
                                         Ok(())
                                     }
                                 }
@@ -1030,7 +1089,10 @@ impl<'de, 'a> DeserializeSeed<'de> for PortSeed<'a> {
 impl<'de, 'a> DeserializeSeed<'de> for NetnamesSeed<'a> {
     type Value = ();
 
-    fn deserialize<D>(self, deserializer: D) -> Result<<Self as DeserializeSeed<'de>>::Value, D::Error>
+    fn deserialize<D>(
+        self,
+        deserializer: D,
+    ) -> Result<<Self as DeserializeSeed<'de>>::Value, D::Error>
     where
         D: Deserializer<'de>,
     {
@@ -1057,7 +1119,10 @@ impl<'de, 'a> DeserializeSeed<'de> for NetnamesSeed<'a> {
                     impl<'de, 'a> DeserializeSeed<'de> for NetnameEntrySeed<'a> {
                         type Value = ();
 
-                        fn deserialize<D>(self, deserializer: D) -> Result<<Self as DeserializeSeed<'de>>::Value, D::Error>
+                        fn deserialize<D>(
+                            self,
+                            deserializer: D,
+                        ) -> Result<<Self as DeserializeSeed<'de>>::Value, D::Error>
                         where
                             D: Deserializer<'de>,
                         {
@@ -1085,7 +1150,7 @@ impl<'de, 'a> DeserializeSeed<'de> for NetnamesSeed<'a> {
                                                 data: &'a mut YosysSaxData,
                                             }
 
-                                                impl<'de, 'a> DeserializeSeed<'de> for BitsSeed<'a> {
+                                            impl<'de, 'a> DeserializeSeed<'de> for BitsSeed<'a> {
                                                 type Value = ();
 
                                                 fn deserialize<D>(
@@ -1105,7 +1170,8 @@ impl<'de, 'a> DeserializeSeed<'de> for NetnamesSeed<'a> {
                                                         fn expecting(
                                                             &self,
                                                             f: &mut std::fmt::Formatter,
-                                                        ) -> std::fmt::Result {
+                                                        ) -> std::fmt::Result
+                                                        {
                                                             f.write_str("array of net IDs")
                                                         }
 
@@ -1127,16 +1193,13 @@ impl<'de, 'a> DeserializeSeed<'de> for NetnamesSeed<'a> {
                                                         }
                                                     }
 
-                                                    deserializer
-                                                        .deserialize_any(BitsVisitor {
-                                                            data: self.data,
-                                                        })
+                                                    deserializer.deserialize_any(BitsVisitor {
+                                                        data: self.data,
+                                                    })
                                                 }
                                             }
 
-                                            map.next_value_seed(BitsSeed {
-                                                data: self.data,
-                                            })?;
+                                            map.next_value_seed(BitsSeed { data: self.data })?;
                                         } else {
                                             map.next_value::<IgnoredAny>()?;
                                         }
@@ -1221,7 +1284,12 @@ fn build_netlist_from_sax_data(data: YosysSaxData) -> IoResult<Netlist> {
         if nets_list.contains(&net_id) {
             let net_name = net_id.to_string();
             let cell_name = &cell_names[cell_idx];
-            let _ = netlist.add_edge(&net_name, cell_name);
+            if let (Some(net_idx), Some(cell_idx_val)) = (
+                netlist.get_net_by_name(&net_name),
+                netlist.get_module_by_name(cell_name),
+            ) {
+                let _ = netlist.add_edge(net_idx, cell_idx_val);
+            }
         }
     }
 
@@ -1231,23 +1299,36 @@ fn build_netlist_from_sax_data(data: YosysSaxData) -> IoResult<Netlist> {
                 if nets_list.contains(&net_id) {
                     let net_name = net_id.to_string();
                     let port_mod = format!("PORT_{}", port_name);
-                    let _ = netlist.add_edge(&net_name, &port_mod);
+                    if let (Some(net_idx), Some(mod_idx)) = (
+                        netlist.get_net_by_name(&net_name),
+                        netlist.get_module_by_name(&port_mod),
+                    ) {
+                        let _ = netlist.add_edge(net_idx, mod_idx);
+                    }
                 }
             }
         }
     }
 
-    netlist.num_pads = num_ports as i32;
+    netlist.num_pads = num_ports;
 
     for cell_name in &cell_names {
-        netlist.set_module_weight(cell_name, 1);
+        if let Some(idx) = netlist.get_module_by_name(cell_name) {
+            netlist.set_module_weight(idx, 1);
+        }
     }
     for port_name in &port_names {
-        netlist.set_module_weight(&format!("PORT_{}", port_name), 0);
+        let port_mod = format!("PORT_{}", port_name);
+        if let Some(idx) = netlist.get_module_by_name(&port_mod) {
+            netlist.set_module_weight(idx, 0);
+        }
     }
 
     for port_name in &port_names {
-        netlist.module_fixed.insert(format!("PORT_{}", port_name));
+        let port_mod = format!("PORT_{}", port_name);
+        if let Some(idx) = netlist.get_module_by_name(&port_mod) {
+            netlist.module_fixed.insert(idx);
+        }
     }
     netlist.has_fixed_modules = num_ports > 0;
 
@@ -1282,7 +1363,7 @@ pub fn read_node_link_json<P: AsRef<Path>>(path: P) -> IoResult<Netlist> {
     let num_pads = graph_obj
         .get("num_pads")
         .and_then(|v| v.as_u64())
-        .unwrap_or(0) as i32;
+        .unwrap_or(0) as usize;
 
     let nodes = data
         .get("nodes")
@@ -1337,8 +1418,14 @@ pub fn read_node_link_json<P: AsRef<Path>>(path: P) -> IoResult<Netlist> {
                 .ok_or_else(|| IoError::InvalidFormat("Edge missing valid 'target'".to_string()))?;
             // In node-link format, we don't know which direction the edge goes.
             // Try both (net, module) and (module, net) orders.
-            if netlist.add_edge(&source, &target).is_err() {
-                let _ = netlist.add_edge(&target, &source);
+            if let Some(net_idx) = netlist.get_net_by_name(&source) {
+                if let Some(mod_idx) = netlist.get_module_by_name(&target) {
+                    let _ = netlist.add_edge(net_idx, mod_idx);
+                }
+            } else if let Some(net_idx) = netlist.get_net_by_name(&target) {
+                if let Some(mod_idx) = netlist.get_module_by_name(&source) {
+                    let _ = netlist.add_edge(net_idx, mod_idx);
+                }
             }
         }
     }
@@ -1354,7 +1441,9 @@ pub fn read_node_link_json<P: AsRef<Path>>(path: P) -> IoResult<Netlist> {
                     .or_else(|| v.as_i64().map(|n| n.to_string()))
             }) {
                 if let Some(w) = node.get("weight").and_then(|v| v.as_i64()) {
-                    netlist.set_module_weight(&id, w as i32);
+                    if let Some(idx) = netlist.get_module_by_name(&id) {
+                        netlist.set_module_weight(idx, w as i32);
+                    }
                 }
             }
         }
@@ -1397,16 +1486,25 @@ pub fn write_json<P: AsRef<Path>>(netlist: &Netlist, path: P) -> IoResult<()> {
     writeln!(file, " }},")?;
 
     writeln!(file, " \"nodes\": [")?;
-    for module in &netlist.modules {
-        writeln!(file, "  {{ \"id\": \"{}\" }},", module)?;
+    for module_idx in netlist.module_indices() {
+        writeln!(
+            file,
+            "  {{ \"id\": \"{}\" }},",
+            &netlist.module_names[module_idx]
+        )?;
+    }
+    for net_idx in netlist.net_indices() {
+        writeln!(file, "  {{ \"id\": \"{}\" }},", &netlist.net_names[net_idx])?;
     }
     writeln!(file, " ],")?;
 
     writeln!(file, " \"links\": [")?;
-    for module in &netlist.modules {
-        for net_name in &netlist.get_module_nets(module) {
+    for module_idx in netlist.module_indices() {
+        let module_name = &netlist.module_names[module_idx];
+        for net_idx in netlist.get_module_nets(module_idx) {
+            let net_name = &netlist.net_names[net_idx];
             writeln!(file, "  {{")?;
-            writeln!(file, "   \"source\": \"{}\",", module)?;
+            writeln!(file, "   \"source\": \"{}\",", module_name)?;
             writeln!(file, "   \"target\": \"{}\"", net_name)?;
             writeln!(file, "  }},")?;
         }
@@ -1427,16 +1525,25 @@ pub fn write_netlist<P: AsRef<Path>>(netlist: &Netlist, path: P) -> IoResult<()>
     writeln!(file)?;
 
     writeln!(file, "# Modules")?;
-    for module in &netlist.modules {
-        writeln!(file, "MODULE {}", module)?;
+    for module_idx in netlist.module_indices() {
+        writeln!(file, "MODULE {}", &netlist.module_names[module_idx])?;
     }
     writeln!(file)?;
 
     writeln!(file, "# Nets")?;
-    for net in &netlist.nets {
-        let modules = netlist.get_net_modules(net);
+    for net_idx in netlist.net_indices() {
+        let modules = netlist.get_net_modules(net_idx);
         if !modules.is_empty() {
-            writeln!(file, "NET {} {}", net, modules.join(" "))?;
+            let mod_names: Vec<String> = modules
+                .iter()
+                .map(|&i| netlist.module_names[i].clone())
+                .collect();
+            writeln!(
+                file,
+                "NET {} {}",
+                &netlist.net_names[net_idx],
+                mod_names.join(" ")
+            )?;
         }
     }
 
@@ -1483,10 +1590,15 @@ mod tests {
         netlist.add_module("m3".to_string()).unwrap();
         netlist.add_net("n1".to_string()).unwrap();
         netlist.add_net("n2".to_string()).unwrap();
-        netlist.add_edge("n1", "m1").unwrap();
-        netlist.add_edge("n1", "m2").unwrap();
-        netlist.add_edge("n2", "m2").unwrap();
-        netlist.add_edge("n2", "m3").unwrap();
+        let n1 = netlist.get_net_by_name("n1").unwrap();
+        let n2 = netlist.get_net_by_name("n2").unwrap();
+        let m1 = netlist.get_module_by_name("m1").unwrap();
+        let m2 = netlist.get_module_by_name("m2").unwrap();
+        let m3 = netlist.get_module_by_name("m3").unwrap();
+        netlist.add_edge(n1, m1).unwrap();
+        netlist.add_edge(n1, m2).unwrap();
+        netlist.add_edge(n2, m2).unwrap();
+        netlist.add_edge(n2, m3).unwrap();
 
         let temp_file = NamedTempFile::new().unwrap();
         write_json(&netlist, temp_file.path()).unwrap();
@@ -1501,10 +1613,15 @@ mod tests {
         netlist.add_module("m3".to_string()).unwrap();
         netlist.add_net("n1".to_string()).unwrap();
         netlist.add_net("n2".to_string()).unwrap();
-        netlist.add_edge("n1", "m1").unwrap();
-        netlist.add_edge("n1", "m2").unwrap();
-        netlist.add_edge("n2", "m2").unwrap();
-        netlist.add_edge("n2", "m3").unwrap();
+        let n1 = netlist.get_net_by_name("n1").unwrap();
+        let n2 = netlist.get_net_by_name("n2").unwrap();
+        let m1 = netlist.get_module_by_name("m1").unwrap();
+        let m2 = netlist.get_module_by_name("m2").unwrap();
+        let m3 = netlist.get_module_by_name("m3").unwrap();
+        netlist.add_edge(n1, m1).unwrap();
+        netlist.add_edge(n1, m2).unwrap();
+        netlist.add_edge(n2, m2).unwrap();
+        netlist.add_edge(n2, m3).unwrap();
 
         let temp_file = NamedTempFile::new().unwrap();
         write_netlist(&netlist, temp_file.path()).unwrap();
@@ -1622,20 +1739,24 @@ mod tests {
         // 4 modules + 3 nets = 7 nodes
         assert_eq!(netlist.number_of_nodes(), 7);
         // Each cell-net connection + each port-net connection = 3 + 3 = 6 pins
-        assert_eq!(netlist.grph.edge_count(), 6);
+        assert_eq!(netlist.gr.edge_count(), 6);
         assert_eq!(netlist.num_pads, 3);
 
         // Cells have weight 1
-        assert_eq!(netlist.get_module_weight("and1"), 1);
+        let and1_idx = netlist.get_module_by_name("and1").unwrap();
+        assert_eq!(netlist.get_module_weight(and1_idx), 1);
         // Ports have weight 0
-        assert_eq!(netlist.get_module_weight("PORT_a"), 0);
-        assert_eq!(netlist.get_module_weight("PORT_b"), 0);
-        assert_eq!(netlist.get_module_weight("PORT_y"), 0);
+        let port_a_idx = netlist.get_module_by_name("PORT_a").unwrap();
+        let port_b_idx = netlist.get_module_by_name("PORT_b").unwrap();
+        let port_y_idx = netlist.get_module_by_name("PORT_y").unwrap();
+        assert_eq!(netlist.get_module_weight(port_a_idx), 0);
+        assert_eq!(netlist.get_module_weight(port_b_idx), 0);
+        assert_eq!(netlist.get_module_weight(port_y_idx), 0);
 
         // Ports are fixed
-        assert!(netlist.module_fixed.contains("PORT_a"));
-        assert!(netlist.module_fixed.contains("PORT_b"));
-        assert!(netlist.module_fixed.contains("PORT_y"));
+        assert!(netlist.module_fixed.contains(&port_a_idx));
+        assert!(netlist.module_fixed.contains(&port_b_idx));
+        assert!(netlist.module_fixed.contains(&port_y_idx));
         assert!(netlist.has_fixed_modules);
     }
 
@@ -1787,11 +1908,14 @@ mod tests {
         assert_eq!(netlist.num_modules(), 4);
         assert_eq!(netlist.num_nets(), 3);
         assert_eq!(netlist.number_of_nodes(), 7);
-        assert_eq!(netlist.grph.edge_count(), 6);
+        assert_eq!(netlist.gr.edge_count(), 6);
         assert_eq!(netlist.num_pads, 3);
-        assert_eq!(netlist.get_module_weight("and1"), 1);
-        assert_eq!(netlist.get_module_weight("PORT_a"), 0);
-        assert!(netlist.module_fixed.contains("PORT_a"));
+
+        let and1_idx = netlist.get_module_by_name("and1").unwrap();
+        assert_eq!(netlist.get_module_weight(and1_idx), 1);
+        let port_a_idx = netlist.get_module_by_name("PORT_a").unwrap();
+        assert_eq!(netlist.get_module_weight(port_a_idx), 0);
+        assert!(netlist.module_fixed.contains(&port_a_idx));
         assert!(netlist.has_fixed_modules);
     }
 
@@ -1917,7 +2041,7 @@ mod tests {
         assert_eq!(dom_netlist.num_nets(), sax_netlist.num_nets());
         assert_eq!(dom_netlist.num_pads, sax_netlist.num_pads);
         assert_eq!(dom_netlist.number_of_nodes(), sax_netlist.number_of_nodes());
-        assert_eq!(dom_netlist.grph.edge_count(), sax_netlist.grph.edge_count());
+        assert_eq!(dom_netlist.gr.edge_count(), sax_netlist.gr.edge_count());
         assert_eq!(dom_netlist.module_fixed, sax_netlist.module_fixed);
     }
 

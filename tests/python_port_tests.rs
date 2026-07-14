@@ -8,6 +8,7 @@
 use std::collections::HashMap;
 use std::collections::HashSet;
 
+use netlistx_rs::cover;
 use netlistx_rs::graph_algo::{min_maximal_independent_set, min_vertex_cover_fast};
 use netlistx_rs::graph_cover::{
     min_cycle_cover, min_odd_cycle_cover, min_vertex_cover as graph_min_vc,
@@ -116,7 +117,7 @@ fn test_netlist_inverter() {
     assert_eq!(h.num_modules(), 3);
     assert_eq!(h.num_nets(), 2);
     assert_eq!(h.number_of_nodes(), 5);
-    assert_eq!(h.grph.edge_count(), 4);
+    assert_eq!(h.gr.edge_count(), 4);
     assert_eq!(h.get_max_degree(), 2);
 }
 
@@ -126,7 +127,7 @@ fn test_netlist_testnetlist() {
     assert_eq!(h.num_modules(), 3);
     assert_eq!(h.num_nets(), 3);
     assert_eq!(h.number_of_nodes(), 6);
-    assert_eq!(h.grph.edge_count(), 6);
+    assert_eq!(h.gr.edge_count(), 6);
     assert_eq!(h.get_max_degree(), 3);
 }
 
@@ -135,7 +136,7 @@ fn test_netlist_drawf() {
     let h = create_drawf();
     assert_eq!(h.num_modules(), 7);
     assert_eq!(h.num_nets(), 6);
-    assert_eq!(h.grph.edge_count(), 14);
+    assert_eq!(h.gr.edge_count(), 14);
     assert_eq!(h.get_max_degree(), 3);
 }
 
@@ -148,23 +149,19 @@ fn test_netlist_random_hgraph() {
 
 #[test]
 fn test_netlist_module_weight_dict() {
-    // Match Python test_netlist_module_weight_dict
     let h = create_test_netlist();
-    // create_test_netlist uses set_module_weight (dict equivalent)
-    assert_eq!(h.get_module_weight("a0"), 533);
-    assert_eq!(h.get_module_weight("a1"), 543);
-    assert_eq!(h.get_module_weight("a2"), 532);
-    // Non-existent module defaults to 1
-    assert_eq!(h.get_module_weight("nonexistent"), 1);
+    assert_eq!(h.get_module_weight(0), 533);
+    assert_eq!(h.get_module_weight(1), 543);
+    assert_eq!(h.get_module_weight(2), 532);
+    assert_eq!(h.get_module_weight(999), 1);
 }
 
 #[test]
 fn test_netlist_module_weight_default() {
     let h = create_inverter();
-    // Modules a0, p1, p2 have weights 1, 0, 0
-    assert_eq!(h.get_module_weight("a0"), 1);
-    assert_eq!(h.get_module_weight("p1"), 0);
-    assert_eq!(h.get_module_weight("p2"), 0);
+    assert_eq!(h.get_module_weight(0), 1);
+    assert_eq!(h.get_module_weight(1), 0);
+    assert_eq!(h.get_module_weight(2), 0);
 }
 
 #[test]
@@ -189,26 +186,13 @@ fn test_netlist_vdcorput() {
 #[test]
 fn test_graph_algo_min_vertex_cover_on_drawf() {
     let h = create_drawf();
-    // Build a petgraph from the Netlist's internal graph for the module nodes
-    // Create a graph from all nodes in the netlist graph
-    let mut grph = petgraph::Graph::<String, (), petgraph::Undirected>::new_undirected();
-    let mut indices = HashMap::new();
-    for node in h.grph.node_indices() {
-        let name = h.grph[node].clone();
-        indices.insert(name.clone(), grph.add_node(name));
-    }
-    for edge in h.grph.raw_edges() {
-        let u = h.grph[edge.source()].clone();
-        let v = h.grph[edge.target()].clone();
-        grph.add_edge(indices[&u], indices[&v], ());
-    }
+    let grph = make_petgraph_from_netlist(&h);
     let weight: HashMap<String, u32> = grph
         .node_indices()
         .map(|i| (grph[i].clone(), 1u32))
         .collect();
     let mut coverset = HashSet::new();
     let (sol, _cost) = graph_min_vc(&grph, &weight, &mut coverset);
-    // Verify it's a valid vertex cover
     for edge in grph.raw_edges() {
         let u = &grph[edge.source()];
         let v = &grph[edge.target()];
@@ -285,17 +269,28 @@ fn test_graph_algo_min_independent_set_on_drawf() {
 
 /// Make a petgraph from a Netlist's internal graph, using only node names.
 fn make_petgraph_from_netlist(h: &Netlist) -> petgraph::Graph<String, (), petgraph::Undirected> {
-    use petgraph::graph::UnGraph;
-    let mut grph = UnGraph::new_undirected();
+    let mut grph = petgraph::Graph::new_undirected();
     let mut indices = HashMap::new();
-    for node in h.grph.node_indices() {
-        let name = h.grph[node].clone();
-        indices.insert(name.clone(), grph.add_node(name));
+    for name in h.module_names.iter() {
+        indices.insert(name.clone(), grph.add_node(name.clone()));
     }
-    for edge in h.grph.raw_edges() {
-        let u = h.grph[edge.source()].clone();
-        let v = h.grph[edge.target()].clone();
-        grph.add_edge(indices[&u], indices[&v], ());
+    for name in h.net_names.iter() {
+        indices.insert(name.clone(), grph.add_node(name.clone()));
+    }
+    for edge in h.gr.raw_edges() {
+        let u_idx = edge.source().index();
+        let v_idx = edge.target().index();
+        let u_name = if u_idx < h.num_modules {
+            &h.module_names[u_idx]
+        } else {
+            &h.net_names[u_idx - h.num_modules]
+        };
+        let v_name = if v_idx < h.num_modules {
+            &h.module_names[v_idx]
+        } else {
+            &h.net_names[v_idx - h.num_modules]
+        };
+        grph.add_edge(indices[u_name], indices[v_name], ());
     }
     grph
 }
@@ -306,14 +301,8 @@ fn make_petgraph_from_netlist(h: &Netlist) -> petgraph::Graph<String, (), petgra
 
 #[test]
 fn test_cover_pd_cover() {
-    use netlistx_rs::graph_cover::pd_cover;
-    let violate_fn = |soln: &HashSet<String>| -> Vec<Vec<String>> {
-        let all_sets = vec![
-            vec!["n0".to_string(), "n1".to_string()],
-            vec!["n0".to_string(), "n2".to_string()],
-            vec!["n1".to_string(), "n2".to_string()],
-        ];
-        // Return only sets that are NOT covered by current soln
+    let violate_fn = |soln: &HashSet<usize>| -> Vec<Vec<usize>> {
+        let all_sets = vec![vec![0, 1], vec![0, 2], vec![1, 2]];
         for s in &all_sets {
             if !s.iter().any(|v| soln.contains(v)) {
                 return vec![s.clone()];
@@ -321,19 +310,12 @@ fn test_cover_pd_cover() {
         }
         vec![]
     };
-    let weight: HashMap<String, u32> = [
-        ("n0".to_string(), 1),
-        ("n1".to_string(), 2),
-        ("n2".to_string(), 3),
-    ]
-    .iter()
-    .cloned()
-    .collect();
+    let weight: Vec<u32> = vec![1, 2, 3];
     let mut soln = HashSet::new();
-    let (covered, _cost) = pd_cover(violate_fn, &weight, &mut soln);
+    let (covered, _cost) = cover::pd_cover(violate_fn, &weight, &mut soln);
     assert!(
-        covered.contains("n0") || covered.contains("n1"),
-        "Expected n0 or n1 in cover, got {:?}",
+        covered.contains(&0) || covered.contains(&1),
+        "Expected 0 or 1 in cover, got {:?}",
         covered
     );
 }
@@ -469,11 +451,10 @@ fn test_cover_k5_minimality() {
 #[test]
 fn test_netlist_algo_min_vertex_cover_drawf() {
     let h = create_drawf();
-    let weight: HashMap<String, u32> = h.modules.iter().map(|m| (m.clone(), 1u32)).collect();
+    let weight: Vec<u32> = vec![1; h.num_modules()];
     let mut coverset = HashSet::new();
     let (_sol, _cost) = min_vertex_cover(&h, &weight, &mut coverset);
-    // Verify all nets are covered
-    for net in &h.nets {
+    for net in h.net_indices() {
         let modules = h.get_net_modules(net);
         let covered = modules.iter().any(|m| coverset.contains(m));
         assert!(covered, "Net {} is not covered", net);
@@ -483,18 +464,17 @@ fn test_netlist_algo_min_vertex_cover_drawf() {
 #[test]
 fn test_netlist_algo_min_maximal_matching_drawf() {
     let h = create_drawf();
-    let weight: HashMap<String, u32> = h.nets.iter().map(|n| (n.clone(), 1u32)).collect();
+    let weight: Vec<u32> = vec![1; h.num_nets()];
     let mut matchset = HashSet::new();
     let mut dep = HashSet::new();
     let (_matchset, _cost) = min_maximal_matching(&h, &weight, &mut matchset, &mut dep);
-    // Verify it's a maximal matching
-    let mut covered_by_match: HashSet<String> = HashSet::new();
-    for net in &matchset {
+    let mut covered_by_match: HashSet<usize> = HashSet::new();
+    for &net in &matchset {
         for m in h.get_net_modules(net) {
             covered_by_match.insert(m);
         }
     }
-    for net in &h.nets {
+    for net in h.net_indices() {
         let modules = h.get_net_modules(net);
         let has_covered = modules.iter().any(|m| covered_by_match.contains(m));
         assert!(
@@ -508,21 +488,20 @@ fn test_netlist_algo_min_maximal_matching_drawf() {
 #[test]
 fn test_netlist_algo_min_maximal_matching_new() {
     let h = create_drawf();
-    let weight: HashMap<String, u32> = h.nets.iter().map(|n| (n.clone(), 1u32)).collect();
+    let weight: Vec<u32> = vec![1; h.num_nets()];
     let (matchset, _cost) = min_maximal_matching_new(&h, &weight);
     assert!(!matchset.is_empty());
-    for net in &matchset {
-        assert!(h.nets.contains(net), "Matched net {} not in netlist", net);
+    for &net in &matchset {
+        assert!(net < h.num_nets(), "Matched net {} not in netlist", net);
     }
 }
 
 #[test]
 fn test_netlist_algo_matching_with_predefined_matchset() {
     let h = create_drawf();
-    let weight: HashMap<String, u32> = h.nets.iter().map(|n| (n.clone(), 1u32)).collect();
-    // Pre-define one net in the matchset
-    let predefined = h.nets.iter().next().cloned().unwrap();
-    let mut matchset: HashSet<String> = [predefined.clone()].iter().cloned().collect();
+    let weight: Vec<u32> = vec![1; h.num_nets()];
+    let predefined: usize = 0;
+    let mut matchset: HashSet<usize> = [predefined].iter().copied().collect();
     let mut dep = HashSet::new();
     let (result, _cost) = min_maximal_matching(&h, &weight, &mut matchset, &mut dep);
     assert!(
@@ -534,12 +513,7 @@ fn test_netlist_algo_matching_with_predefined_matchset() {
 #[test]
 fn test_netlist_algo_matching_with_different_weights() {
     let h = create_drawf();
-    let weight: HashMap<String, i32> = h
-        .nets
-        .iter()
-        .enumerate()
-        .map(|(i, n)| (n.clone(), i as i32 + 1))
-        .collect();
+    let weight: Vec<i32> = (0..h.num_nets()).map(|i| i as i32 + 1).collect();
     let mut matchset = HashSet::new();
     let mut dep = HashSet::new();
     let (_result, cost) = min_maximal_matching(&h, &weight, &mut matchset, &mut dep);
@@ -660,13 +634,11 @@ fn test_rand_cover_single_edge_weighted() {
 
 #[test]
 fn test_rand_hyper_cover_simple() {
-    // Mock hypergraph: single net [0, 1]
     let h = create_inverter();
-    let weight: HashMap<String, u32> = h.modules.iter().map(|m| (m.clone(), 1u32)).collect();
-    let coverset = HashSet::new();
+    let weight: Vec<u32> = vec![1; h.num_modules()];
+    let coverset: HashSet<usize> = HashSet::new();
     let (sol, _cost) = rand_hyper_vertex_cover(&h, &weight, 0, &coverset);
-    // Verify all nets are covered
-    for net in &h.nets {
+    for net in h.net_indices() {
         let modules = h.get_net_modules(net);
         assert!(
             modules.iter().any(|m| sol.contains(m)),
@@ -679,8 +651,8 @@ fn test_rand_hyper_cover_simple() {
 #[test]
 fn test_rand_hyper_cover_deterministic() {
     let h = create_inverter();
-    let weight: HashMap<String, u32> = h.modules.iter().map(|m| (m.clone(), 1u32)).collect();
-    let coverset = HashSet::new();
+    let weight: Vec<u32> = vec![1; h.num_modules()];
+    let coverset: HashSet<usize> = HashSet::new();
     let (sol1, cost1) = rand_hyper_vertex_cover(&h, &weight, 123, &coverset);
     let (sol2, cost2) = rand_hyper_vertex_cover(&h, &weight, 123, &coverset);
     assert_eq!(sol1, sol2);
@@ -690,8 +662,8 @@ fn test_rand_hyper_cover_deterministic() {
 #[test]
 fn test_rand_hyper_cover_empty() {
     let h = Netlist::new();
-    let weight: HashMap<String, i32> = HashMap::new();
-    let coverset = HashSet::new();
+    let weight: Vec<i32> = Vec::new();
+    let coverset: HashSet<usize> = HashSet::new();
     let (sol, cost) = rand_hyper_vertex_cover(&h, &weight, 0, &coverset);
     assert!(sol.is_empty());
     assert_eq!(cost, 0);
@@ -987,36 +959,36 @@ use netlistx_rs::io::read_node_link_json;
 #[test]
 fn test_netlist_get_module_weight_nonexistent() {
     let h = Netlist::new();
-    assert_eq!(h.get_module_weight("nonexistent"), 1);
+    assert_eq!(h.get_module_weight(999), 1);
 }
 
 #[test]
 fn test_netlist_weights_on_drawf() {
     let h = create_drawf();
-    assert_eq!(h.get_module_weight("a0"), 1);
-    assert_eq!(h.get_module_weight("a1"), 3);
-    assert_eq!(h.get_module_weight("a2"), 4);
-    assert_eq!(h.get_module_weight("a3"), 2);
-    assert_eq!(h.get_module_weight("p1"), 0);
-    assert_eq!(h.get_module_weight("p2"), 0);
-    assert_eq!(h.get_module_weight("p3"), 0);
+    assert_eq!(h.get_module_weight(0), 1);
+    assert_eq!(h.get_module_weight(1), 3);
+    assert_eq!(h.get_module_weight(2), 4);
+    assert_eq!(h.get_module_weight(3), 2);
+    assert_eq!(h.get_module_weight(4), 0);
+    assert_eq!(h.get_module_weight(5), 0);
+    assert_eq!(h.get_module_weight(6), 0);
 }
 
 #[test]
 fn test_netlist_get_module_nets() {
     let h = create_inverter();
-    let nets_a0 = h.get_module_nets("a0");
+    let nets_a0 = h.get_module_nets(0);
     assert_eq!(nets_a0.len(), 2);
-    assert!(nets_a0.contains(&"n0".to_string()));
-    assert!(nets_a0.contains(&"n1".to_string()));
+    assert!(nets_a0.contains(&0));
+    assert!(nets_a0.contains(&1));
 }
 
 #[test]
 fn test_netlist_get_net_modules() {
     let h = create_inverter();
-    let mods_n0 = h.get_net_modules("n0");
-    assert!(mods_n0.contains(&"a0".to_string()));
-    assert!(mods_n0.contains(&"p1".to_string()));
+    let mods_n0 = h.get_net_modules(0);
+    assert!(mods_n0.contains(&0));
+    assert!(mods_n0.contains(&1));
 }
 
 #[test]
@@ -1047,16 +1019,14 @@ fn test_read_p1_json() {
 
 #[test]
 fn test_json_degree_counts() {
-    // Port of test_readjson from Python: verify net degree distribution
     let netlist = read_node_link_json("testcases/p1.json").unwrap();
     let mut count_2 = 0;
-    for net in &netlist.nets {
+    for net in netlist.net_indices() {
         let deg = netlist.get_net_degree(net);
         if deg == 2 {
             count_2 += 1;
         }
     }
-    // Python asserts count_2 == 494
     assert_eq!(count_2, 494);
 }
 
@@ -1069,7 +1039,7 @@ fn check_yosys_file(
     exp_modules: usize,
     exp_nets: usize,
     exp_pins: usize,
-    exp_pads: i32,
+    exp_pads: usize,
     exp_nodes: usize,
 ) {
     let netlist = netlistx_rs::io::read_yosys_json(path).unwrap();
@@ -1080,12 +1050,7 @@ fn check_yosys_file(
         path
     );
     assert_eq!(netlist.num_nets(), exp_nets, "{}: nets mismatch", path);
-    assert_eq!(
-        netlist.grph.edge_count(),
-        exp_pins,
-        "{}: pins mismatch",
-        path
-    );
+    assert_eq!(netlist.gr.edge_count(), exp_pins, "{}: pins mismatch", path);
     assert_eq!(netlist.num_pads, exp_pads, "{}: pads mismatch", path);
     assert_eq!(
         netlist.number_of_nodes(),
@@ -1690,36 +1655,25 @@ fn test_tsp_make_l2_graph_large() {
 
 #[test]
 fn test_cover_hyper_vertex_cover_with_coverset() {
-    // Port of TestMinHyperVertexCoverWithCoverset
     let mut netlist = Netlist::new();
-    netlist.add_module("m0".to_string()).unwrap();
-    netlist.add_module("m1".to_string()).unwrap();
-    netlist.add_module("m2".to_string()).unwrap();
-    netlist.add_net("n0".to_string()).unwrap();
-    netlist.add_net("n1".to_string()).unwrap();
-    netlist.add_edge("n0", "m0").unwrap();
-    netlist.add_edge("n0", "m1").unwrap();
-    netlist.add_edge("n1", "m1").unwrap();
-    netlist.add_edge("n1", "m2").unwrap();
+    let m0 = netlist.add_module("m0".to_string()).unwrap();
+    let m1 = netlist.add_module("m1".to_string()).unwrap();
+    let _m2 = netlist.add_module("m2".to_string()).unwrap();
+    let n0 = netlist.add_net("n0".to_string()).unwrap();
+    let n1 = netlist.add_net("n1".to_string()).unwrap();
+    netlist.add_edge(n0, m0).unwrap();
+    netlist.add_edge(n0, m1).unwrap();
+    netlist.add_edge(n1, m1).unwrap();
+    netlist.add_edge(n1, 2).unwrap();
 
-    let weight: HashMap<String, u32> = [
-        ("m0".to_string(), 1),
-        ("m1".to_string(), 1),
-        ("m2".to_string(), 1),
-    ]
-    .iter()
-    .cloned()
-    .collect();
-
-    // Use min_hyper_vertex_cover from cover module with pre-set coverset
-    let mut coverset: HashSet<String> = [("m0".to_string())].iter().cloned().collect();
+    let weight: Vec<u32> = vec![1; netlist.num_modules()];
+    let mut coverset: HashSet<usize> = [0].iter().copied().collect();
     let (sol, _cost) = netlistx_rs::cover::min_hyper_vertex_cover(&netlist, &weight, &mut coverset);
     assert!(
-        sol.contains("m0"),
+        sol.contains(&0),
         "Pre-existing vertex should be in the cover"
     );
-    // Verify all nets covered
-    for net in &netlist.nets {
+    for net in netlist.net_indices() {
         let modules = netlist.get_net_modules(net);
         assert!(
             modules.iter().any(|m| sol.contains(m)),
@@ -1788,69 +1742,45 @@ fn test_cover_cycle_cover_with_preexisting_coverset() {
 
 #[test]
 fn test_matching_unequal_weights_triggers_alternative_selection() {
-    // Port of test_unequal_weights_triggers_alternative_selection
-    // Chain: N1 (weight 1) - [m0, m1] - N2 (weight 5) - [m1, m2] - N3 (weight 1) - [m2, m3]
     let mut netlist = Netlist::new();
     for i in 0..4 {
         let _ = netlist.add_module(format!("m{}", i));
     }
-    for n in &["N1", "N2", "N3"] {
-        let _ = netlist.add_net(n.to_string());
-    }
-    let _ = netlist.add_edge("N1", "m0");
-    let _ = netlist.add_edge("N1", "m1");
-    let _ = netlist.add_edge("N2", "m1");
-    let _ = netlist.add_edge("N2", "m2");
-    let _ = netlist.add_edge("N3", "m2");
-    let _ = netlist.add_edge("N3", "m3");
+    let n1 = netlist.add_net("N1".to_string()).unwrap();
+    let n2 = netlist.add_net("N2".to_string()).unwrap();
+    let n3 = netlist.add_net("N3".to_string()).unwrap();
+    netlist.add_edge(n1, 0).unwrap();
+    netlist.add_edge(n1, 1).unwrap();
+    netlist.add_edge(n2, 1).unwrap();
+    netlist.add_edge(n2, 2).unwrap();
+    netlist.add_edge(n3, 2).unwrap();
+    netlist.add_edge(n3, 3).unwrap();
 
-    let weight: HashMap<String, u32> = [
-        ("N1".to_string(), 1),
-        ("N2".to_string(), 5),
-        ("N3".to_string(), 1),
-    ]
-    .iter()
-    .cloned()
-    .collect();
-
+    let weight: Vec<u32> = vec![1, 5, 1];
     let mut matchset = HashSet::new();
     let mut dep = HashSet::new();
     let (sol, cost) = min_maximal_matching(&netlist, &weight, &mut matchset, &mut dep);
-    // N2 is heavy, should NOT be in the matching; cost should be N1 + N3 = 2
-    assert!(
-        !sol.contains("N2"),
-        "Heavy net N2 should not be in matching"
-    );
+    assert!(!sol.contains(&1), "Heavy net N2 should not be in matching");
     assert_eq!(cost, 2, "Expected cost 2 (N1+N3)");
 }
 
 #[test]
 fn test_matching_different_weights_chain() {
-    // Chain with descending weights [3, 2, 1]
-    // Use i32 to avoid subtraction overflow
     let mut netlist = Netlist::new();
     for i in 0..4 {
         let _ = netlist.add_module(format!("m{}", i));
     }
-    for n in &["N1", "N2", "N3"] {
-        let _ = netlist.add_net(n.to_string());
-    }
-    let _ = netlist.add_edge("N1", "m0");
-    let _ = netlist.add_edge("N1", "m1");
-    let _ = netlist.add_edge("N2", "m1");
-    let _ = netlist.add_edge("N2", "m2");
-    let _ = netlist.add_edge("N3", "m2");
-    let _ = netlist.add_edge("N3", "m3");
+    let n1 = netlist.add_net("N1".to_string()).unwrap();
+    let n2 = netlist.add_net("N2".to_string()).unwrap();
+    let n3 = netlist.add_net("N3".to_string()).unwrap();
+    netlist.add_edge(n1, 0).unwrap();
+    netlist.add_edge(n1, 1).unwrap();
+    netlist.add_edge(n2, 1).unwrap();
+    netlist.add_edge(n2, 2).unwrap();
+    netlist.add_edge(n3, 2).unwrap();
+    netlist.add_edge(n3, 3).unwrap();
 
-    let weight: HashMap<String, i32> = [
-        ("N1".to_string(), 3),
-        ("N2".to_string(), 2),
-        ("N3".to_string(), 1),
-    ]
-    .iter()
-    .cloned()
-    .collect();
-
+    let weight: Vec<i32> = vec![3, 2, 1];
     let mut matchset = HashSet::new();
     let mut dep = HashSet::new();
     let (_sol, cost) = min_maximal_matching(&netlist, &weight, &mut matchset, &mut dep);
@@ -1863,40 +1793,29 @@ fn test_matching_different_weights_chain() {
 
 #[test]
 fn test_matching_scattered_star_graph() {
-    // Star-like: center module 0 connects to nets N1-N4 with weights [10, 1, 10, 10]
     let mut netlist = Netlist::new();
     for i in 0..5 {
         let _ = netlist.add_module(format!("m{}", i));
     }
-    for n in &["N1", "N2", "N3", "N4"] {
-        let _ = netlist.add_net(n.to_string());
-    }
-    let _ = netlist.add_edge("N1", "m0");
-    let _ = netlist.add_edge("N1", "m1");
-    let _ = netlist.add_edge("N2", "m0");
-    let _ = netlist.add_edge("N2", "m2");
-    let _ = netlist.add_edge("N3", "m0");
-    let _ = netlist.add_edge("N3", "m3");
-    let _ = netlist.add_edge("N4", "m0");
-    let _ = netlist.add_edge("N4", "m4");
+    let n1 = netlist.add_net("N1".to_string()).unwrap();
+    let n2 = netlist.add_net("N2".to_string()).unwrap();
+    let n3 = netlist.add_net("N3".to_string()).unwrap();
+    let n4 = netlist.add_net("N4".to_string()).unwrap();
+    netlist.add_edge(n1, 0).unwrap();
+    netlist.add_edge(n1, 1).unwrap();
+    netlist.add_edge(n2, 0).unwrap();
+    netlist.add_edge(n2, 2).unwrap();
+    netlist.add_edge(n3, 0).unwrap();
+    netlist.add_edge(n3, 3).unwrap();
+    netlist.add_edge(n4, 0).unwrap();
+    netlist.add_edge(n4, 4).unwrap();
 
-    let weight: HashMap<String, u32> = [
-        ("N1".to_string(), 10),
-        ("N2".to_string(), 1),
-        ("N3".to_string(), 10),
-        ("N4".to_string(), 10),
-    ]
-    .iter()
-    .cloned()
-    .collect();
-
+    let weight: Vec<u32> = vec![10, 1, 10, 10];
     let mut matchset = HashSet::new();
     let mut dep = HashSet::new();
     let (sol, cost) = min_maximal_matching(&netlist, &weight, &mut matchset, &mut dep);
-    // N2 (weight 1) should be selected
-    assert!(sol.contains("N2"), "Light net N2 should be in matching");
+    assert!(sol.contains(&1), "Light net N2 should be in matching");
     assert!(cost >= 1);
-    // Only non-overlapping nets can be selected (all share module 0) -> only one net
     assert_eq!(
         sol.len(),
         1,
@@ -1990,27 +1909,20 @@ fn test_hadlock_odd_faces_different_path_weights() {
 
 #[test]
 fn test_rand_cover_hyper_empty_net() {
-    // Hypergraph with an empty net (no modules connected)
     let mut hyprgraph = Netlist::new();
     hyprgraph.add_module("m0".to_string()).unwrap();
     hyprgraph.add_module("m1".to_string()).unwrap();
-    hyprgraph.add_net("N1".to_string()).unwrap();
+    let n1 = hyprgraph.add_net("N1".to_string()).unwrap();
     hyprgraph.add_net("N2".to_string()).unwrap();
-    hyprgraph.add_edge("N1", "m0").unwrap();
-    hyprgraph.add_edge("N1", "m1").unwrap();
-    // N2 has no connections (empty net)
+    hyprgraph.add_edge(n1, 0).unwrap();
+    hyprgraph.add_edge(n1, 1).unwrap();
 
-    let weight: HashMap<String, u32> = [("m0".to_string(), 1), ("m1".to_string(), 1)]
-        .iter()
-        .cloned()
-        .collect();
-    let coverset = HashSet::new();
+    let weight: Vec<u32> = vec![1, 1];
+    let coverset: HashSet<usize> = HashSet::new();
     let (soln, cost) = rand_hyper_vertex_cover(&hyprgraph, &weight, 42, &coverset);
-    // N1 needs covering, N2 is empty and should be skipped
     assert!(!soln.is_empty());
     assert!(cost >= 1);
-    // Verify N1 is covered
-    let n1_modules = hyprgraph.get_net_modules("N1");
+    let n1_modules = hyprgraph.get_net_modules(0);
     assert!(
         n1_modules.iter().any(|m| soln.contains(m)),
         "Net N1 not covered"
@@ -2078,12 +1990,10 @@ fn test_read_are_empty_lines() {
 #[test]
 fn test_netlist_algo_min_vertex_cover_cost_drawf() {
     let h = create_drawf();
-    let weight: HashMap<String, u32> = h.modules.iter().map(|m| (m.clone(), 1u32)).collect();
+    let weight: Vec<u32> = vec![1; h.num_modules()];
     let mut coverset = HashSet::new();
     let (sol, _cost) = min_vertex_cover(&h, &weight, &mut coverset);
-    // Python asserts cost == 3; Rust may differ due to iteration order
-    // Verify all nets are covered instead
-    for net in &h.nets {
+    for net in h.net_indices() {
         let modules = h.get_net_modules(net);
         let covered = modules.iter().any(|m| sol.contains(m));
         assert!(covered, "Net {} is not covered", net);
@@ -2094,41 +2004,32 @@ fn test_netlist_algo_min_vertex_cover_cost_drawf() {
 #[test]
 fn test_netlist_algo_min_maximal_matching_cost_drawf() {
     let h = create_drawf();
-    let weight: HashMap<String, u32> = h.nets.iter().map(|n| (n.clone(), 1u32)).collect();
+    let weight: Vec<u32> = vec![1; h.num_nets()];
     let mut matchset = HashSet::new();
     let mut dep = HashSet::new();
     let (_sol, cost) = min_maximal_matching(&h, &weight, &mut matchset, &mut dep);
-    // Python asserts cost == 3 for drawf
     assert_eq!(cost, 3);
 }
 
 #[test]
 fn test_netlist_algo_matching_with_predefined_dependents() {
     let h = create_drawf();
-    let weight: HashMap<String, u32> = h.nets.iter().map(|n| (n.clone(), 1u32)).collect();
-    // Add a module as dependent
-    let dependent_module = h.modules.iter().next().cloned().unwrap();
+    let weight: Vec<u32> = vec![1; h.num_nets()];
+    let dependent_module: usize = 0;
     let mut matchset = HashSet::new();
-    let mut dep: HashSet<String> = [dependent_module].iter().cloned().collect();
+    let mut dep: HashSet<usize> = [dependent_module].iter().copied().collect();
     let (result, _cost) = min_maximal_matching(&h, &weight, &mut matchset, &mut dep);
-    assert!(result.len() <= h.nets.len());
+    assert!(result.len() <= h.num_nets());
 }
 
 #[test]
 fn test_netlist_algo_matching_with_different_weights_cost_check() {
     let h = create_drawf();
-    // Use i32 to avoid subtraction overflow
-    let weight: HashMap<String, i32> = h
-        .nets
-        .iter()
-        .enumerate()
-        .map(|(i, n)| (n.clone(), (i + 1) as i32))
-        .collect();
+    let weight: Vec<i32> = (0..h.num_nets()).map(|i| (i + 1) as i32).collect();
     let mut matchset = HashSet::new();
     let mut dep = HashSet::new();
     let (result, cost) = min_maximal_matching(&h, &weight, &mut matchset, &mut dep);
-    // Cost should match sum of weights of selected nets
-    let expected_cost: i32 = result.iter().map(|n| weight[n]).sum();
+    let expected_cost: i32 = result.iter().map(|&n| weight[n]).sum();
     assert_eq!(cost, expected_cost);
 }
 
@@ -2141,10 +2042,9 @@ fn test_netlist_module_weight_none() {
     let mut netlist = Netlist::new();
     netlist.add_module("m0".to_string()).unwrap();
     netlist.add_module("m1".to_string()).unwrap();
-    // Default weight is 1 when no weights set
-    assert_eq!(netlist.get_module_weight("m0"), 1);
-    assert_eq!(netlist.get_module_weight("m1"), 1);
-    assert_eq!(netlist.get_module_weight("nonexistent"), 1);
+    assert_eq!(netlist.get_module_weight(0), 1);
+    assert_eq!(netlist.get_module_weight(1), 1);
+    assert_eq!(netlist.get_module_weight(999), 1);
 }
 
 #[test]
@@ -2152,18 +2052,18 @@ fn test_netlist_module_weight_assignment() {
     let mut netlist = Netlist::new();
     netlist.add_module("m0".to_string()).unwrap();
     netlist.add_module("m1".to_string()).unwrap();
-    netlist.set_module_weight("m0", 5);
-    netlist.set_module_weight("m1", 10);
-    assert_eq!(netlist.get_module_weight("m0"), 5);
-    assert_eq!(netlist.get_module_weight("m1"), 10);
+    netlist.set_module_weight(0, 5);
+    netlist.set_module_weight(1, 10);
+    assert_eq!(netlist.get_module_weight(0), 5);
+    assert_eq!(netlist.get_module_weight(1), 10);
 }
 
 #[test]
 fn test_netlist_module_weight_update() {
     let mut netlist = Netlist::new();
     netlist.add_module("m0".to_string()).unwrap();
-    netlist.set_module_weight("m0", 5);
-    assert_eq!(netlist.get_module_weight("m0"), 5);
-    netlist.set_module_weight("m0", 15);
-    assert_eq!(netlist.get_module_weight("m0"), 15);
+    netlist.set_module_weight(0, 5);
+    assert_eq!(netlist.get_module_weight(0), 5);
+    netlist.set_module_weight(0, 15);
+    assert_eq!(netlist.get_module_weight(0), 15);
 }

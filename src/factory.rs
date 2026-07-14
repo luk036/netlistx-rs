@@ -79,9 +79,15 @@ pub fn create_inverter() -> Netlist {
         .build()
         .expect("Failed to build inverter netlist");
 
-    netlist.set_module_weight("a0", 1);
-    netlist.set_module_weight("p1", 0);
-    netlist.set_module_weight("p2", 0);
+    if let Some(idx) = netlist.get_module_by_name("a0") {
+        netlist.set_module_weight(idx, 1);
+    }
+    if let Some(idx) = netlist.get_module_by_name("p1") {
+        netlist.set_module_weight(idx, 0);
+    }
+    if let Some(idx) = netlist.get_module_by_name("p2") {
+        netlist.set_module_weight(idx, 0);
+    }
 
     netlist
 }
@@ -104,9 +110,15 @@ pub fn create_inverter2() -> Netlist {
         .build()
         .expect("Failed to build inverter2 netlist");
 
-    netlist.set_module_weight("mod0", 1);
-    netlist.set_module_weight("mod1", 0);
-    netlist.set_module_weight("mod2", 0);
+    if let Some(idx) = netlist.get_module_by_name("mod0") {
+        netlist.set_module_weight(idx, 1);
+    }
+    if let Some(idx) = netlist.get_module_by_name("mod1") {
+        netlist.set_module_weight(idx, 0);
+    }
+    if let Some(idx) = netlist.get_module_by_name("mod2") {
+        netlist.set_module_weight(idx, 0);
+    }
 
     netlist
 }
@@ -146,13 +158,48 @@ pub fn create_drawf() -> Netlist {
         .build()
         .expect("Failed to build drawf netlist");
 
-    netlist.set_module_weight("a0", 1);
-    netlist.set_module_weight("a1", 3);
-    netlist.set_module_weight("a2", 4);
-    netlist.set_module_weight("a3", 2);
-    netlist.set_module_weight("p1", 0);
-    netlist.set_module_weight("p2", 0);
-    netlist.set_module_weight("p3", 0);
+    netlist.set_module_weight(
+        netlist
+            .get_module_by_name("a0")
+            .expect("module a0 not found"),
+        1,
+    );
+    netlist.set_module_weight(
+        netlist
+            .get_module_by_name("a1")
+            .expect("module a1 not found"),
+        3,
+    );
+    netlist.set_module_weight(
+        netlist
+            .get_module_by_name("a2")
+            .expect("module a2 not found"),
+        4,
+    );
+    netlist.set_module_weight(
+        netlist
+            .get_module_by_name("a3")
+            .expect("module a3 not found"),
+        2,
+    );
+    netlist.set_module_weight(
+        netlist
+            .get_module_by_name("p1")
+            .expect("module p1 not found"),
+        0,
+    );
+    netlist.set_module_weight(
+        netlist
+            .get_module_by_name("p2")
+            .expect("module p2 not found"),
+        0,
+    );
+    netlist.set_module_weight(
+        netlist
+            .get_module_by_name("p3")
+            .expect("module p3 not found"),
+        0,
+    );
 
     netlist
 }
@@ -178,9 +225,24 @@ pub fn create_test_netlist() -> Netlist {
 
     let mut netlist = builder.build().expect("Failed to build test netlist");
 
-    netlist.set_module_weight("a0", 533);
-    netlist.set_module_weight("a1", 543);
-    netlist.set_module_weight("a2", 532);
+    netlist.set_module_weight(
+        netlist
+            .get_module_by_name("a0")
+            .expect("module a0 not found"),
+        533,
+    );
+    netlist.set_module_weight(
+        netlist
+            .get_module_by_name("a1")
+            .expect("module a1 not found"),
+        543,
+    );
+    netlist.set_module_weight(
+        netlist
+            .get_module_by_name("a2")
+            .expect("module a2 not found"),
+        532,
+    );
 
     netlist
 }
@@ -250,8 +312,14 @@ mod tests {
         assert_eq!(netlist.num_modules(), 3);
         assert_eq!(netlist.num_nets(), 2);
         assert_eq!(netlist.num_pads, 2);
-        assert_eq!(netlist.get_module_weight("a0"), 1);
-        assert_eq!(netlist.get_module_weight("p1"), 0);
+        assert_eq!(
+            netlist.get_module_weight(netlist.get_module_by_name("a0").unwrap()),
+            1
+        );
+        assert_eq!(
+            netlist.get_module_weight(netlist.get_module_by_name("p1").unwrap()),
+            0
+        );
     }
 
     #[test]
@@ -268,11 +336,26 @@ mod tests {
         assert_eq!(netlist.num_modules(), 7);
         assert_eq!(netlist.num_nets(), 6);
         assert_eq!(netlist.num_pads, 3);
-        assert_eq!(netlist.get_module_weight("a0"), 1);
-        assert_eq!(netlist.get_module_weight("a1"), 3);
-        assert_eq!(netlist.get_module_weight("a2"), 4);
-        assert_eq!(netlist.get_module_weight("a3"), 2);
-        assert_eq!(netlist.get_module_weight("p1"), 0);
+        assert_eq!(
+            netlist.get_module_weight(netlist.get_module_by_name("a0").unwrap()),
+            1
+        );
+        assert_eq!(
+            netlist.get_module_weight(netlist.get_module_by_name("a1").unwrap()),
+            3
+        );
+        assert_eq!(
+            netlist.get_module_weight(netlist.get_module_by_name("a2").unwrap()),
+            4
+        );
+        assert_eq!(
+            netlist.get_module_weight(netlist.get_module_by_name("a3").unwrap()),
+            2
+        );
+        assert_eq!(
+            netlist.get_module_weight(netlist.get_module_by_name("p1").unwrap()),
+            0
+        );
     }
 
     #[test]
@@ -280,9 +363,18 @@ mod tests {
         let netlist = create_test_netlist();
         assert_eq!(netlist.num_modules(), 3);
         assert_eq!(netlist.num_nets(), 3);
-        assert_eq!(netlist.get_module_weight("a0"), 533);
-        assert_eq!(netlist.get_module_weight("a1"), 543);
-        assert_eq!(netlist.get_module_weight("a2"), 532);
+        assert_eq!(
+            netlist.get_module_weight(netlist.get_module_by_name("a0").unwrap()),
+            533
+        );
+        assert_eq!(
+            netlist.get_module_weight(netlist.get_module_by_name("a1").unwrap()),
+            543
+        );
+        assert_eq!(
+            netlist.get_module_weight(netlist.get_module_by_name("a2").unwrap()),
+            532
+        );
     }
 
     #[test]

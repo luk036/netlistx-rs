@@ -6,10 +6,14 @@
 
 use std::collections::HashMap;
 use std::collections::HashSet;
+use std::hash::Hash;
 use std::ops::Add;
 use std::ops::Sub;
 
 /// Minimum weighted vertex cover using primal-dual approximation (no post-processing).
+///
+/// Generic over node type `N`: works with `String` keys (named graphs) or
+/// integer keys (indexed graphs). Integer keys avoid hashing+cloning overhead.
 ///
 /// Finds a vertex cover $C \subseteq V$ minimizing $\sum_{v \in C} w(v)$ such that
 /// every edge $(u,v) \in E$ has at least one endpoint in $C$.
@@ -18,21 +22,22 @@ use std::ops::Sub;
 /// to the cover. Updates `gap[utx] -= gap[vtx]` and sets `gap[vtx] = 0`.
 ///
 /// Ported from Python `min_vertex_cover_fast()` in `graph_algo.py`.
-pub fn min_vertex_cover_fast<W>(
-    grph: &petgraph::Graph<String, (), petgraph::Undirected>,
-    weight: &HashMap<String, W>,
-    coverset: &mut HashSet<String>,
-) -> (HashSet<String>, W)
+pub fn min_vertex_cover_fast<N, W>(
+    grph: &petgraph::Graph<N, (), petgraph::Undirected>,
+    weight: &HashMap<N, W>,
+    coverset: &mut HashSet<N>,
+) -> (HashSet<N>, W)
 where
+    N: Hash + Eq + Clone,
     W: Copy + Add<Output = W> + Sub<Output = W> + PartialOrd + Default,
 {
-    let mut gap: HashMap<String, W> = HashMap::new();
+    let mut gap: HashMap<N, W> = HashMap::new();
     let mut total_dual_cost: W = W::default();
     let mut total_primal_cost: W = W::default();
 
     for edge in grph.raw_edges() {
-        let mut u = &grph[edge.source()];
-        let mut v = &grph[edge.target()];
+        let u = &grph[edge.source()];
+        let v = &grph[edge.target()];
 
         if coverset.contains(u) || coverset.contains(v) {
             continue;
@@ -41,9 +46,7 @@ where
         let gu = *gap.get(u).unwrap_or(&weight[u]);
         let gv = *gap.get(v).unwrap_or(&weight[v]);
 
-        if gu < gv {
-            std::mem::swap(&mut u, &mut v);
-        }
+        let (u, v) = if gu < gv { (v, u) } else { (u, v) };
         // Now gap[u] >= gap[v], add v to cover
         let gv = *gap.get(v).unwrap_or(&weight[v]);
         coverset.insert(v.clone());

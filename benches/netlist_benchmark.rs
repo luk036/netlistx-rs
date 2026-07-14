@@ -2,7 +2,6 @@ use std::hint::black_box;
 
 use criterion::{criterion_group, criterion_main, Criterion};
 use netlistx_rs::netlist::{Netlist, NetlistBuilder};
-use netlistx_rs::partitioning::FiducciaMattheyses;
 use netlistx_rs::statistics::NetlistStats;
 
 fn create_large_netlist(num_modules: usize, nets_per_module: usize) -> Netlist {
@@ -44,6 +43,7 @@ fn bench_netlist_creation(c: &mut Criterion) {
 
 fn bench_statistics(c: &mut Criterion) {
     let netlist = create_large_netlist(100, 4);
+    let module_idx = netlist.get_module_by_name("m50").expect("m50 should exist");
 
     c.bench_function("statistics_analyze", |b| {
         b.iter(|| {
@@ -53,39 +53,12 @@ fn bench_statistics(c: &mut Criterion) {
     });
 
     c.bench_function("module_degree_computation", |b| {
-        let module = "m50";
         b.iter(|| {
-            let degree = netlist.get_module_degree(black_box(module));
+            let degree = netlist.get_module_degree(black_box(module_idx));
             black_box(degree);
         });
     });
 }
 
-fn bench_partitioning(c: &mut Criterion) {
-    let netlist = create_large_netlist(100, 4);
-    let fm = FiducciaMattheyses::new();
-
-    c.bench_function("partitioning_fm_100_modules", |b| {
-        b.iter(|| {
-            let result = fm.partition(black_box(&netlist), black_box(0.5));
-            black_box(result.unwrap().cut_size);
-        });
-    });
-
-    let large_netlist = create_large_netlist(500, 4);
-
-    c.bench_function("partitioning_fm_500_modules", |b| {
-        b.iter(|| {
-            let result = fm.partition(black_box(&large_netlist), black_box(0.5));
-            black_box(result.unwrap().cut_size);
-        });
-    });
-}
-
-criterion_group!(
-    benches,
-    bench_netlist_creation,
-    bench_statistics,
-    bench_partitioning
-);
+criterion_group!(benches, bench_netlist_creation, bench_statistics,);
 criterion_main!(benches);

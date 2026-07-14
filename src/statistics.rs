@@ -44,14 +44,14 @@ impl NetlistStats {
         let mut num_pins = 0;
 
         // Compute module degrees
-        for module in &netlist.modules {
-            let degree = netlist.get_module_degree(module);
+        for m in netlist.module_indices() {
+            let degree = netlist.get_module_degree(m);
             module_degrees.push(degree);
         }
 
         // Compute net degrees
-        for net in &netlist.nets {
-            let degree = netlist.get_net_degree(net);
+        for n in netlist.net_indices() {
+            let degree = netlist.get_net_degree(n);
             net_degrees.push(degree);
             num_pins += degree;
         }
@@ -150,7 +150,20 @@ impl NetlistStats {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::netlist::Netlist;
+
+    fn create_test_netlist() -> Netlist {
+        let mut netlist = Netlist::new();
+        let _ = netlist.add_module("m1".to_string());
+        let _ = netlist.add_module("m2".to_string());
+        let _ = netlist.add_module("m3".to_string());
+        let _ = netlist.add_net("n1".to_string());
+        let _ = netlist.add_net("n2".to_string());
+        netlist.add_edge(0, 0).unwrap();
+        netlist.add_edge(0, 1).unwrap();
+        netlist.add_edge(1, 1).unwrap();
+        netlist.add_edge(1, 2).unwrap();
+        netlist
+    }
 
     #[test]
     fn test_analyze_empty_netlist() {
@@ -163,17 +176,7 @@ mod tests {
 
     #[test]
     fn test_analyze_simple_netlist() {
-        let mut netlist = Netlist::new();
-        let _ = netlist.add_module("m1".to_string());
-        let _ = netlist.add_module("m2".to_string());
-        let _ = netlist.add_module("m3".to_string());
-        let _ = netlist.add_net("n1".to_string());
-        let _ = netlist.add_net("n2".to_string());
-        netlist.add_edge("n1", "m1").unwrap();
-        netlist.add_edge("n1", "m2").unwrap();
-        netlist.add_edge("n2", "m2").unwrap();
-        netlist.add_edge("n2", "m3").unwrap();
-
+        let netlist = create_test_netlist();
         let stats = NetlistStats::analyze(&netlist);
         assert_eq!(stats.num_modules, 3);
         assert_eq!(stats.num_nets, 2);
@@ -184,51 +187,21 @@ mod tests {
 
     #[test]
     fn test_stats_accessor_max_module_degree() {
-        let mut netlist = Netlist::new();
-        let _ = netlist.add_module("m1".to_string());
-        let _ = netlist.add_module("m2".to_string());
-        let _ = netlist.add_module("m3".to_string());
-        let _ = netlist.add_net("n1".to_string());
-        let _ = netlist.add_net("n2".to_string());
-        netlist.add_edge("n1", "m1").unwrap();
-        netlist.add_edge("n1", "m2").unwrap();
-        netlist.add_edge("n2", "m2").unwrap();
-        netlist.add_edge("n2", "m3").unwrap();
-
+        let netlist = create_test_netlist();
         let stats = NetlistStats::analyze(&netlist);
         assert_eq!(stats.max_module_degree(), 2);
     }
 
     #[test]
     fn test_stats_accessor_max_net_degree() {
-        let mut netlist = Netlist::new();
-        let _ = netlist.add_module("m1".to_string());
-        let _ = netlist.add_module("m2".to_string());
-        let _ = netlist.add_module("m3".to_string());
-        let _ = netlist.add_net("n1".to_string());
-        let _ = netlist.add_net("n2".to_string());
-        netlist.add_edge("n1", "m1").unwrap();
-        netlist.add_edge("n1", "m2").unwrap();
-        netlist.add_edge("n2", "m2").unwrap();
-        netlist.add_edge("n2", "m3").unwrap();
-
+        let netlist = create_test_netlist();
         let stats = NetlistStats::analyze(&netlist);
         assert_eq!(stats.max_net_degree(), 2);
     }
 
     #[test]
     fn test_stats_pin_module_ratio() {
-        let mut netlist = Netlist::new();
-        let _ = netlist.add_module("m1".to_string());
-        let _ = netlist.add_module("m2".to_string());
-        let _ = netlist.add_module("m3".to_string());
-        let _ = netlist.add_net("n1".to_string());
-        let _ = netlist.add_net("n2".to_string());
-        netlist.add_edge("n1", "m1").unwrap();
-        netlist.add_edge("n1", "m2").unwrap();
-        netlist.add_edge("n2", "m2").unwrap();
-        netlist.add_edge("n2", "m3").unwrap();
-
+        let netlist = create_test_netlist();
         let stats = NetlistStats::analyze(&netlist);
         let ratio = stats.pin_module_ratio();
         assert!((ratio - 4.0 / 3.0).abs() < 0.001);
@@ -236,17 +209,7 @@ mod tests {
 
     #[test]
     fn test_stats_pin_net_ratio() {
-        let mut netlist = Netlist::new();
-        let _ = netlist.add_module("m1".to_string());
-        let _ = netlist.add_module("m2".to_string());
-        let _ = netlist.add_module("m3".to_string());
-        let _ = netlist.add_net("n1".to_string());
-        let _ = netlist.add_net("n2".to_string());
-        netlist.add_edge("n1", "m1").unwrap();
-        netlist.add_edge("n1", "m2").unwrap();
-        netlist.add_edge("n2", "m2").unwrap();
-        netlist.add_edge("n2", "m3").unwrap();
-
+        let netlist = create_test_netlist();
         let stats = NetlistStats::analyze(&netlist);
         assert_eq!(stats.pin_net_ratio(), 2.0);
     }
@@ -267,34 +230,14 @@ mod tests {
 
     #[test]
     fn test_stats_avg_module_degree() {
-        let mut netlist = Netlist::new();
-        let _ = netlist.add_module("m1".to_string());
-        let _ = netlist.add_module("m2".to_string());
-        let _ = netlist.add_module("m3".to_string());
-        let _ = netlist.add_net("n1".to_string());
-        let _ = netlist.add_net("n2".to_string());
-        netlist.add_edge("n1", "m1").unwrap();
-        netlist.add_edge("n1", "m2").unwrap();
-        netlist.add_edge("n2", "m2").unwrap();
-        netlist.add_edge("n2", "m3").unwrap();
-
+        let netlist = create_test_netlist();
         let stats = NetlistStats::analyze(&netlist);
         assert!((stats.avg_module_degree() - 1.333) < 0.001);
     }
 
     #[test]
     fn test_stats_min_degree() {
-        let mut netlist = Netlist::new();
-        let _ = netlist.add_module("m1".to_string());
-        let _ = netlist.add_module("m2".to_string());
-        let _ = netlist.add_module("m3".to_string());
-        let _ = netlist.add_net("n1".to_string());
-        let _ = netlist.add_net("n2".to_string());
-        netlist.add_edge("n1", "m1").unwrap();
-        netlist.add_edge("n1", "m2").unwrap();
-        netlist.add_edge("n2", "m2").unwrap();
-        netlist.add_edge("n2", "m3").unwrap();
-
+        let netlist = create_test_netlist();
         let stats = NetlistStats::analyze(&netlist);
         assert_eq!(stats.min_module_degree, 1);
         assert_eq!(stats.min_net_degree, 2);

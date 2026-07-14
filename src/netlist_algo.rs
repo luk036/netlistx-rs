@@ -1,23 +1,17 @@
-use std::collections::HashMap;
 use std::collections::HashSet;
 
 use crate::netlist::Netlist;
 
-/// Minimum weighted vertex cover for netlist hypergraphs using primal-dual paradigm.
+/// Minimum weighted vertex cover for hypergraphs using primal-dual paradigm.
 ///
-/// For a hypergraph $H = (V, E)$ with vertex weights $w: V \to \mathbb{R}^+$,
-/// finds a cover $C \subseteq V$ minimizing $\sum_{v \in C} w(v)$ such that
-/// every hyperedge $e \in E$ has at least one endpoint in $C$.
-///
-/// Iterates over all nets, selecting the module with minimum gap (modified weight)
-/// to cover each uncovered net.
-///
-/// Ported from C++ `min_vertex_cover()` in `netlist_algo.hpp`.
+/// Modules are identified by `usize` indices (0..num_modules), matching C++/Python.
+/// Weights are stored in a slice indexed by module index.
+/// The cover set contains module indices.
 pub fn min_vertex_cover<W>(
     netlist: &Netlist,
-    weight: &HashMap<String, W>,
-    coverset: &mut HashSet<String>,
-) -> (HashSet<String>, W)
+    weight: &[W],
+    coverset: &mut HashSet<usize>,
+) -> (HashSet<usize>, W)
 where
     W: Copy
         + std::ops::Add<Output = W>
@@ -25,56 +19,54 @@ where
         + std::cmp::PartialOrd
         + Default,
 {
-    let mut gap: HashMap<String, W> = HashMap::new();
+    let mut gap: Vec<W> = weight.to_vec();
     let mut total_dual_cost: W = W::default();
     let mut total_primal_cost: W = W::default();
 
-    for net in &netlist.nets {
+    for net in netlist.net_indices() {
         let modules = netlist.get_net_modules(net);
         let already_covered = modules.iter().any(|m| coverset.contains(m));
         if already_covered {
             continue;
         }
 
-        let min_vtx = modules
+        let min_vtx = *modules
             .iter()
             .min_by(|&v1, &v2| {
-                let g1 = gap.get(v1).copied().unwrap_or(weight[v1]);
-                let g2 = gap.get(v2).copied().unwrap_or(weight[v2]);
+                let g1 = gap[*v1];
+                let g2 = gap[*v2];
                 g1.partial_cmp(&g2).unwrap_or(std::cmp::Ordering::Equal)
             })
-            .cloned()
             .expect("net with no modules should not happen");
 
-        let min_val = gap.get(&min_vtx).copied().unwrap_or(weight[&min_vtx]);
-        coverset.insert(min_vtx.clone());
-        total_primal_cost = total_primal_cost + weight[&min_vtx];
+        let min_val = gap[min_vtx];
+        coverset.insert(min_vtx);
+        total_primal_cost = total_primal_cost + weight[min_vtx];
         total_dual_cost = total_dual_cost + min_val;
 
-        for vtx in &modules {
-            let g = gap.entry(vtx.clone()).or_insert(weight[vtx]);
-            *g = if *g > min_val { *g - min_val } else { W::default() };
+        for &vtx in &modules {
+            let g = &mut gap[vtx];
+            *g = if *g > min_val {
+                *g - min_val
+            } else {
+                W::default()
+            };
         }
     }
 
     (coverset.clone(), total_primal_cost)
 }
 
-/// Minimum weighted maximal matching for netlist hypergraphs.
+/// Minimum weighted maximal matching for hypergraphs.
 ///
-/// Finds a maximal matching $M \subseteq E$ minimizing $\sum_{e \in M} w(e)$
-/// such that no two matched hyperedges share a common vertex.
-///
-/// Implements a primal-dual approximation algorithm. Selects nets greedily
-/// avoiding conflicts (shared vertices), maintaining a dependency set.
-///
-/// Ported from C++ `min_maximal_matching()` in `netlist_algo.hpp` / `netlist_algo.cpp`.
+/// Nets are identified by `usize` indices (0..num_nets).
+/// Weights are stored in a slice indexed by net index.
 pub fn min_maximal_matching<W>(
     netlist: &Netlist,
-    weight: &HashMap<String, W>,
-    matchset: &mut HashSet<String>,
-    dep: &mut HashSet<String>,
-) -> (HashSet<String>, W)
+    weight: &[W],
+    matchset: &mut HashSet<usize>,
+    dep: &mut HashSet<usize>,
+) -> (HashSet<usize>, W)
 where
     W: Copy
         + std::ops::Add<Output = W>
@@ -82,11 +74,11 @@ where
         + std::cmp::PartialOrd
         + Default,
 {
-    let mut gap: HashMap<String, W> = HashMap::new();
+    let mut gap: Vec<W> = weight.to_vec();
     let mut total_dual_cost: W = W::default();
     let mut total_primal_cost: W = W::default();
 
-    for net in &netlist.nets {
+    for net in netlist.net_indices() {
         let modules_in_net = netlist.get_net_modules(net);
 
         let net_has_dep = modules_in_net.iter().any(|m| dep.contains(m));
@@ -94,36 +86,42 @@ where
             continue;
         }
 
-        if matchset.contains(net) {
+        if matchset.contains(&net) {
             cover_dep(netlist, net, dep);
             continue;
         }
 
-        let mut min_val = gap.get(net).copied().unwrap_or(weight[net]);
-        let mut min_net = net.clone();
+        let mut min_val = gap[net];
+        let mut min_net = net;
 
-        for m in &modules_in_net {
-            for net2 in &netlist.get_module_nets(m) {
-                let g_val = gap.get(net2).copied().unwrap_or(weight[net2]);
-                if !dep.contains(net2) && g_val < min_val {
+        for &m in &modules_in_net {
+            for &net2 in &netlist.get_module_nets(m) {
+                let g_val = gap[net2];
+                if !dep.contains(&net2) && g_val < min_val {
                     min_val = g_val;
-                    min_net = net2.clone();
+                    min_net = net2;
                 }
             }
         }
 
-        cover_dep(netlist, &min_net, dep);
-        matchset.insert(min_net.clone());
-        total_primal_cost = total_primal_cost + weight[&min_net];
+        cover_dep(netlist, min_net, dep);
+        matchset.insert(min_net);
+        total_primal_cost = total_primal_cost + weight[min_net];
         total_dual_cost = total_dual_cost + min_val;
 
-        if &min_net != net {
-            let g = gap.entry(net.clone()).or_insert(weight[net]);
-            *g = if *g > min_val { *g - min_val } else { W::default() };
-            for m in &modules_in_net {
-                for net2 in &netlist.get_module_nets(m) {
-                    let g = gap.entry(net2.clone()).or_insert(weight[net2]);
-                    *g = if *g > min_val { *g - min_val } else { W::default() };
+        if min_net != net {
+            gap[net] = if gap[net] > min_val {
+                gap[net] - min_val
+            } else {
+                W::default()
+            };
+            for &m in &modules_in_net {
+                for &net2 in &netlist.get_module_nets(m) {
+                    gap[net2] = if gap[net2] > min_val {
+                        gap[net2] - min_val
+                    } else {
+                        W::default()
+                    };
                 }
             }
         }
@@ -133,10 +131,7 @@ where
 }
 
 /// Convenience version that creates empty matchset and dep sets.
-pub fn min_maximal_matching_new<W>(
-    netlist: &Netlist,
-    weight: &HashMap<String, W>,
-) -> (HashSet<String>, W)
+pub fn min_maximal_matching_new<W>(netlist: &Netlist, weight: &[W]) -> (HashSet<usize>, W)
 where
     W: Copy
         + std::ops::Add<Output = W>
@@ -149,7 +144,7 @@ where
     min_maximal_matching(netlist, weight, &mut matchset, &mut dep)
 }
 
-fn cover_dep(netlist: &Netlist, net: &str, dep: &mut HashSet<String>) {
+fn cover_dep(netlist: &Netlist, net: usize, dep: &mut HashSet<usize>) {
     for m in netlist.get_net_modules(net) {
         dep.insert(m);
     }
@@ -161,80 +156,74 @@ mod tests {
     use crate::netlist::Netlist;
 
     fn create_dwarf_netlist() -> Netlist {
-        let mut netlist = Netlist::new();
+        let mut nl = Netlist::new();
         for i in 0..7 {
-            netlist.add_module(format!("mod{}", i)).unwrap();
+            nl.add_module(format!("mod{}", i)).unwrap();
         }
         for i in 0..6 {
-            netlist.add_net(format!("net{}", i)).unwrap();
+            nl.add_net(format!("net{}", i)).unwrap();
         }
-        netlist.add_edge("net0", "mod0").unwrap();
-        netlist.add_edge("net0", "mod1").unwrap();
-        netlist.add_edge("net1", "mod0").unwrap();
-        netlist.add_edge("net1", "mod2").unwrap();
-        netlist.add_edge("net1", "mod3").unwrap();
-        netlist.add_edge("net2", "mod1").unwrap();
-        netlist.add_edge("net2", "mod2").unwrap();
-        netlist.add_edge("net2", "mod3").unwrap();
-        netlist.add_edge("net3", "mod2").unwrap();
-        netlist.add_edge("net4", "mod3").unwrap();
-        netlist.add_edge("net5", "mod0").unwrap();
-        netlist
+        nl.add_edge(0, 0).unwrap(); // net0-mod0
+        nl.add_edge(0, 1).unwrap();
+        nl.add_edge(1, 0).unwrap();
+        nl.add_edge(1, 2).unwrap();
+        nl.add_edge(1, 3).unwrap();
+        nl.add_edge(2, 1).unwrap();
+        nl.add_edge(2, 2).unwrap();
+        nl.add_edge(2, 3).unwrap();
+        nl.add_edge(3, 2).unwrap();
+        nl.add_edge(4, 3).unwrap();
+        nl.add_edge(5, 0).unwrap();
+        nl
     }
 
     fn create_test_netlist() -> Netlist {
-        let mut netlist = Netlist::new();
-        netlist.add_module("mod0".to_string()).unwrap();
-        netlist.add_module("mod1".to_string()).unwrap();
-        netlist.add_module("mod2".to_string()).unwrap();
-        netlist.add_net("net0".to_string()).unwrap();
-        netlist.add_net("net1".to_string()).unwrap();
-        netlist.add_net("net2".to_string()).unwrap();
-        netlist.add_edge("net0", "mod0").unwrap();
-        netlist.add_edge("net0", "mod1").unwrap();
-        netlist.add_edge("net1", "mod0").unwrap();
-        netlist.add_edge("net1", "mod2").unwrap();
-        netlist.add_edge("net2", "mod1").unwrap();
-        netlist
+        let mut nl = Netlist::new();
+        nl.add_module("mod0".to_string()).unwrap();
+        nl.add_module("mod1".to_string()).unwrap();
+        nl.add_module("mod2".to_string()).unwrap();
+        nl.add_net("net0".to_string()).unwrap();
+        nl.add_net("net1".to_string()).unwrap();
+        nl.add_net("net2".to_string()).unwrap();
+        nl.add_edge(0, 0).unwrap();
+        nl.add_edge(0, 1).unwrap();
+        nl.add_edge(1, 0).unwrap();
+        nl.add_edge(1, 2).unwrap();
+        nl.add_edge(2, 1).unwrap();
+        nl
     }
 
     #[test]
     fn test_min_vertex_cover_dwarf() {
-        let hyprgraph = create_dwarf_netlist();
-        let mut weight = HashMap::new();
-        for m in &hyprgraph.modules {
-            weight.insert(m.clone(), 1u32);
-        }
+        let h = create_dwarf_netlist();
+        let weight: Vec<u32> = (0..h.num_modules).map(|_| 1u32).collect();
         let mut coverset = HashSet::new();
-        let _cost = min_vertex_cover(&hyprgraph, &weight, &mut coverset);
+        let _cost = min_vertex_cover(&h, &weight, &mut coverset);
 
-        for net in &hyprgraph.nets {
-            let modules = hyprgraph.get_net_modules(net);
-            let net_covered = modules.iter().any(|m| coverset.contains(m));
-            assert!(net_covered, "Net {} is not covered", net);
+        for net in h.net_indices() {
+            let modules = h.get_net_modules(net);
+            let covered = modules.iter().any(|m| coverset.contains(m));
+            assert!(covered, "Net {} is not covered", net);
         }
     }
 
     #[test]
     fn test_min_maximal_matching_dwarf() {
-        let hyprgraph = create_dwarf_netlist();
-        let mut weight = HashMap::new();
-        for n in &hyprgraph.nets {
-            weight.insert(n.clone(), 1u32);
-        }
+        let h = create_dwarf_netlist();
+        let weight: Vec<u32> = (0..h.num_nets).map(|_| 1u32).collect();
         let mut matchset = HashSet::new();
         let mut dep = HashSet::new();
-        let _cost = min_maximal_matching(&hyprgraph, &weight, &mut matchset, &mut dep);
+        let _cost = min_maximal_matching(&h, &weight, &mut matchset, &mut dep);
 
-        let mut net_covered_by_match = HashSet::new();
-        for matched_net in &matchset {
-            for m in hyprgraph.get_net_modules(matched_net) {
-                net_covered_by_match.insert(m);
+        let mut covered_by_match: HashSet<usize> = HashSet::new();
+        for &matched_net in &matchset {
+            for m in h.get_net_modules(matched_net) {
+                covered_by_match.insert(m);
             }
         }
-        for net in &hyprgraph.nets {
-            let modules = hyprgraph.get_net_modules(net);
-            let has_covered = modules.iter().any(|m| net_covered_by_match.contains(m));
+        for net in h.net_indices() {
+            let modules = h.get_net_modules(net);
+            let has_covered = modules.iter().any(|m| covered_by_match.contains(m));
             assert!(
                 has_covered,
                 "Net {} shares no vertex with any matched net",
@@ -245,20 +234,13 @@ mod tests {
 
     #[test]
     fn test_min_maximal_matching_consistency() {
-        let hyprgraph = create_test_netlist();
-        let mut weight = HashMap::new();
-        for n in &hyprgraph.nets {
-            weight.insert(n.clone(), 1u32);
-        }
-        let (matchset, _cost) = min_maximal_matching_new(&hyprgraph, &weight);
+        let h = create_test_netlist();
+        let weight: Vec<u32> = (0..h.num_nets).map(|_| 1u32).collect();
+        let (matchset, _cost) = min_maximal_matching_new(&h, &weight);
 
         assert!(!matchset.is_empty());
-        for net in &matchset {
-            assert!(
-                hyprgraph.nets.contains(net),
-                "Matched net {} is not in netlist",
-                net
-            );
+        for &net in &matchset {
+            assert!(net < h.num_nets, "Matched net {} is not in netlist", net);
         }
     }
 }
