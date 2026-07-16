@@ -690,8 +690,12 @@ mod proptest_impls {
     use proptest::prelude::*;
 
     fn netlist_strategy() -> impl Strategy<Value = Netlist> {
-        (0..20usize, 0..20usize, prop::collection::vec((0..20usize, 0..20usize), 0..50)).prop_map(
-            |(num_modules, num_nets, edges)| {
+        (
+            0..20usize,
+            0..20usize,
+            prop::collection::vec((0..20usize, 0..20usize), 0..50),
+        )
+            .prop_map(|(num_modules, num_nets, edges)| {
                 let mut builder = NetlistBuilder::new();
 
                 for i in 0..num_modules {
@@ -703,14 +707,13 @@ mod proptest_impls {
 
                 for (module_idx, net_idx) in edges {
                     if module_idx < num_modules && net_idx < num_nets {
-                        builder = builder
-                            .add_edge(&format!("n{}", net_idx), &format!("m{}", module_idx));
+                        builder =
+                            builder.add_edge(&format!("n{}", net_idx), &format!("m{}", module_idx));
                     }
                 }
 
                 builder.build().unwrap_or_default()
-            },
-        )
+            })
     }
 
     proptest! {
