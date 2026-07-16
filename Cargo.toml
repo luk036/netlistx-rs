@@ -26,7 +26,7 @@ default = []
 serde = ["indexmap/serde", "petgraph/serde"]
 rayon = ["dep:rayon"]
 cuda = ["dep:cudarc"]
-quickcheck = ["dep:quickcheck"]
+proptest = ["dep:proptest"]
 
 [dependencies.serde]
 version = "1.0"
@@ -42,17 +42,16 @@ optional = true
 default-features = false
 features = ["driver", "nvrtc", "cuda-12030"]
 
-[dependencies.quickcheck]
-version = "1.0"
+[dependencies.proptest]
+version = "1"
 optional = true
 
 [dev-dependencies]
 num-rational = "0.4.2"
 criterion = "0.8.2"
-quickcheck = "1.0"
-quickcheck_macros = "1.0"
+proptest = "1"
 tempfile = "3.10"
-netlistx-rs = { path = ".", features = ["quickcheck"] }
+netlistx-rs = { path = ".", features = ["proptest"] }
 
 [[bench]]
 name = "yosys_json_bench"

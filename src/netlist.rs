@@ -684,47 +684,41 @@ mod tests {
 }
 
 #[cfg(test)]
-#[cfg(feature = "quickcheck")]
-mod quickcheck_impls {
+#[cfg(feature = "proptest")]
+mod proptest_impls {
     use super::*;
-    use quickcheck::{Arbitrary, Gen};
-    use quickcheck_macros::quickcheck;
+    use proptest::prelude::*;
 
-    impl Arbitrary for Netlist {
-        fn arbitrary(g: &mut Gen) -> Self {
-            let num_modules: usize = Arbitrary::arbitrary(g);
-            let num_modules = num_modules % 20;
-            let num_nets: usize = Arbitrary::arbitrary(g);
-            let num_nets = num_nets % 20;
+    fn netlist_strategy() -> impl Strategy<Value = Netlist> {
+        (0..20usize, 0..20usize, prop::collection::vec((0..20usize, 0..20usize), 0..50)).prop_map(
+            |(num_modules, num_nets, edges)| {
+                let mut builder = NetlistBuilder::new();
 
-            let mut builder = NetlistBuilder::new();
-
-            for i in 0..num_modules {
-                builder = builder.add_module(&format!("m{}", i));
-            }
-            for i in 0..num_nets {
-                builder = builder.add_net(&format!("n{}", i));
-            }
-
-            let num_edges: usize = Arbitrary::arbitrary(g);
-            let num_edges = num_edges % 50;
-            for _ in 0..num_edges {
-                let module_idx: usize = Arbitrary::arbitrary(g);
-                let net_idx: usize = Arbitrary::arbitrary(g);
-                if module_idx < num_modules && net_idx < num_nets {
-                    builder =
-                        builder.add_edge(&format!("n{}", net_idx), &format!("m{}", module_idx));
+                for i in 0..num_modules {
+                    builder = builder.add_module(&format!("m{}", i));
                 }
-            }
+                for i in 0..num_nets {
+                    builder = builder.add_net(&format!("n{}", i));
+                }
 
-            builder.build().unwrap_or_default()
-        }
+                for (module_idx, net_idx) in edges {
+                    if module_idx < num_modules && net_idx < num_nets {
+                        builder = builder
+                            .add_edge(&format!("n{}", net_idx), &format!("m{}", module_idx));
+                    }
+                }
+
+                builder.build().unwrap_or_default()
+            },
+        )
     }
 
-    #[quickcheck]
-    fn qc_netlist_arbitrary_is_valid(netlist: Netlist) -> bool {
-        netlist.number_of_nodes() == netlist.num_modules + netlist.num_nets
-            && netlist.module_names.len() == netlist.num_modules
-            && netlist.net_names.len() == netlist.num_nets
+    proptest! {
+        #[test]
+        fn qc_netlist_arbitrary_is_valid(netlist in netlist_strategy()) {
+            assert!(netlist.number_of_nodes() == netlist.num_modules + netlist.num_nets
+                && netlist.module_names.len() == netlist.num_modules
+                && netlist.net_names.len() == netlist.num_nets);
+        }
     }
 }
