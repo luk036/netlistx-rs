@@ -421,15 +421,12 @@ impl NetlistBuilder {
 
     /// Build the `Netlist`, resolving names to indices.
     pub fn build(mut self) -> NetlistResult<Netlist> {
-        // Add all pending modules
         for name in &self.pending_modules {
             self.netlist.add_module(name.clone())?;
         }
-        // Add all pending nets
         for name in &self.pending_nets {
             self.netlist.add_net(name.clone())?;
         }
-        // Add all pending edges
         for (net_name, mod_name) in &self.pending_edges {
             let net_idx = self
                 .netlist
