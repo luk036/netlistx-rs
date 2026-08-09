@@ -61,9 +61,5 @@ harness = false
 name = "netlist_bench"
 harness = false
 
-[[bench]]
-name = "netlist_benchmark"
-harness = false
-
 [profile.bench]
 debug = true
