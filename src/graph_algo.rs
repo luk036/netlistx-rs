@@ -56,7 +56,10 @@ where
         *g = *g - gv;
         gap.insert(v.clone(), W::default());
     }
-
+    assert!(
+        total_primal_cost <= total_dual_cost + total_dual_cost,
+        "Primal cost exceeds 2 * dual cost"
+    );
     (coverset.clone(), total_primal_cost)
 }
 
