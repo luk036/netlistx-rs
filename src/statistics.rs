@@ -103,11 +103,13 @@ impl NetlistStats {
     /// Get the average module degree
     ///
     /// $$ \bar{d}_m = \frac{1}{|M|} \sum_{m \in M} \deg(m) $$
+    #[inline]
     pub fn avg_module_degree(&self) -> f64 {
         self.avg_module_degree
     }
 
     /// Get the maximum module degree
+    #[inline]
     pub fn max_module_degree(&self) -> usize {
         self.max_module_degree
     }
@@ -115,11 +117,13 @@ impl NetlistStats {
     /// Get the average net degree
     ///
     /// $$ \bar{d}_n = \frac{1}{|N|} \sum_{n \in N} \deg(n) $$
+    #[inline]
     pub fn avg_net_degree(&self) -> f64 {
         self.avg_net_degree
     }
 
     /// Get the maximum net degree
+    #[inline]
     pub fn max_net_degree(&self) -> usize {
         self.max_net_degree
     }

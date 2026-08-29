@@ -142,26 +142,31 @@ impl Netlist {
     }
 
     /// Number of modules.
+    #[inline]
     pub fn number_of_modules(&self) -> usize {
         self.num_modules
     }
 
     /// Number of modules (alias).
+    #[inline]
     pub fn num_modules(&self) -> usize {
         self.num_modules
     }
 
     /// Number of nets.
+    #[inline]
     pub fn number_of_nets(&self) -> usize {
         self.num_nets
     }
 
     /// Number of nets (alias).
+    #[inline]
     pub fn num_nets(&self) -> usize {
         self.num_nets
     }
 
     /// Total nodes in the graph (modules + nets).
+    #[inline]
     pub fn number_of_nodes(&self) -> usize {
         self.gr.node_count()
     }
@@ -309,31 +314,37 @@ impl Netlist {
     }
 
     /// Maximum degree among all modules.
+    #[inline]
     pub fn get_max_degree(&self) -> usize {
         self.max_degree
     }
 
     /// Maximum degree among all nets.
+    #[inline]
     pub fn get_max_net_degree(&self) -> usize {
         self.max_net_degree
     }
 
     /// Look up module index by name.
+    #[inline]
     pub fn get_module_by_name(&self, name: &str) -> Option<usize> {
         self.module_map.get(name).copied()
     }
 
     /// Look up net index by name.
+    #[inline]
     pub fn get_net_by_name(&self, name: &str) -> Option<usize> {
         self.net_map.get(name).copied()
     }
 
     /// Iterate over all module indices.
+    #[inline]
     pub fn module_indices(&self) -> impl Iterator<Item = usize> {
         0..self.num_modules
     }
 
     /// Iterate over all net indices.
+    #[inline]
     pub fn net_indices(&self) -> impl Iterator<Item = usize> {
         0..self.num_nets
     }
@@ -368,6 +379,7 @@ impl Netlist {
 }
 
 impl Default for Netlist {
+    #[inline]
     fn default() -> Self {
         Self::new()
     }
@@ -443,6 +455,7 @@ impl NetlistBuilder {
 }
 
 impl Default for NetlistBuilder {
+    #[inline]
     fn default() -> Self {
         Self::new()
     }

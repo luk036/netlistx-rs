@@ -135,6 +135,7 @@ mod tests {
         netlist
     }
 
+    #[inline]
     fn default_weight(netlist: &Netlist) -> Vec<i32> {
         vec![1; netlist.num_modules()]
     }

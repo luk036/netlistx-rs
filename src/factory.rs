@@ -34,6 +34,7 @@ pub fn vdc(n: u32, base: u32) -> f64 {
 /// $\\phi_b$ is the van der Corput function.
 ///
 /// Ported from Python `vdcorput()` in `netlist.py`.
+#[inline]
 pub fn vdcorput(n: u32, base: u32) -> Vec<f64> {
     (0..n).map(|i| vdc(i, base)).collect()
 }
