@@ -1,6 +1,6 @@
-use std::collections::{BTreeSet, HashSet};
+use std::collections::BTreeSet;
 use std::fs::File;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufReader, Write};
 use std::path::Path;
 
 use indexmap::IndexMap;
@@ -8,6 +8,7 @@ use serde::de::{DeserializeSeed, Deserializer, IgnoredAny, MapAccess, SeqAccess,
 use serde_json::Deserializer as JsonDeserializer;
 
 use crate::netlist::Netlist;
+use crate::reader::make_reader;
 
 /// Error type for I/O operations
 #[derive(Debug, thiserror::Error)]
@@ -72,6 +73,8 @@ pub fn read_netlist<P: AsRef<Path>>(path: P) -> IoResult<Netlist> {
 }
 
 /// Read a netlist in the specified format.
+///
+/// Dispatches to the internal reader strategy matching `format`.
 pub fn read_hypergraph<P: AsRef<Path>>(path: P, format: InputFormat) -> IoResult<Netlist> {
     let actual_format = if format == InputFormat::AutoDetect {
         let filename = path
@@ -83,128 +86,7 @@ pub fn read_hypergraph<P: AsRef<Path>>(path: P, format: InputFormat) -> IoResult
         format
     };
 
-    match actual_format {
-        InputFormat::HMetis => read_hmetis_format(path),
-        InputFormat::Json => read_json_format(path),
-        InputFormat::Dimacs => read_dimacs_format(path),
-        InputFormat::NetD | InputFormat::AutoDetect => read_netd_format(path),
-    }
-}
-
-/// Read a netlist in IBM netD format.
-///
-/// Ported from C++ `read_netD()` / `read_netD_format()` in `readwrite.cpp`.
-fn read_netd_format<P: AsRef<Path>>(path: P) -> IoResult<Netlist> {
-    let content = std::fs::read_to_string(path.as_ref()).map_err(IoError::IoError)?;
-    let mut lines = content.lines();
-
-    let header_line = lines.next().ok_or_else(|| IoError::ParseError {
-        line: 1,
-        message: "Empty file".to_string(),
-    })?;
-
-    let header_parts: Vec<&str> = header_line.split_whitespace().collect();
-    if header_parts.len() < 4 {
-        return Err(IoError::ParseError {
-            line: 1,
-            message: "Invalid netD header: expected 4 numbers".to_string(),
-        });
-    }
-
-    let num_pins: u32 = header_parts[1].parse().map_err(|_| IoError::ParseError {
-        line: 1,
-        message: "Invalid numPins".to_string(),
-    })?;
-    let _num_nets: u32 = header_parts[2].parse().map_err(|_| IoError::ParseError {
-        line: 1,
-        message: "Invalid numNets".to_string(),
-    })?;
-    let num_modules: u32 = header_parts[3].parse().map_err(|_| IoError::ParseError {
-        line: 1,
-        message: "Invalid numModules".to_string(),
-    })?;
-    let pad_offset: u32 = if header_parts.len() > 4 {
-        header_parts[4].parse().unwrap_or(0)
-    } else {
-        0
-    };
-
-    let mut netlist = Netlist::new();
-    for i in 0..num_modules {
-        netlist
-            .add_module(format!("m{}", i))
-            .map_err(|e| IoError::ParseError {
-                line: 0,
-                message: e.to_string(),
-            })?;
-    }
-
-    let mut edge_idx = num_modules;
-    let mut pin_count = 0;
-
-    for line in lines {
-        if line.trim().is_empty() {
-            continue;
-        }
-        if pin_count >= num_pins {
-            break;
-        }
-
-        let chars: Vec<char> = line.trim().chars().collect();
-        if chars.is_empty() {
-            continue;
-        }
-
-        let mut pos = 0;
-
-        let node: u32 = if chars[pos] == 'a' {
-            pos += 1;
-            let num_str: String = chars[pos..]
-                .iter()
-                .take_while(|c| c.is_ascii_digit())
-                .collect();
-            pos += num_str.len();
-            num_str.parse().unwrap_or(0)
-        } else if chars[pos] == 'p' {
-            pos += 1;
-            let num_str: String = chars[pos..]
-                .iter()
-                .take_while(|c| c.is_ascii_digit())
-                .collect();
-            pos += num_str.len();
-            let n: u32 = num_str.parse().unwrap_or(0);
-            n + pad_offset
-        } else {
-            pin_count += 1;
-            continue;
-        };
-
-        while pos < chars.len() && chars[pos].is_whitespace() {
-            pos += 1;
-        }
-
-        if pos < chars.len() && chars[pos] == 's' {
-            edge_idx += 1;
-        }
-
-        let net_name = format!("n{}", edge_idx - 1 - num_modules);
-        if netlist.get_net_by_name(&net_name).is_none() {
-            let _ = netlist.add_net(net_name.clone());
-        }
-
-        let mod_name = format!("m{}", node);
-        if let (Some(net_idx), Some(mod_idx)) = (
-            netlist.get_net_by_name(&net_name),
-            netlist.get_module_by_name(&mod_name),
-        ) {
-            let _ = netlist.add_edge(net_idx, mod_idx);
-        }
-
-        pin_count += 1;
-    }
-
-    netlist.num_pads = (num_modules - pad_offset - 1) as usize;
-    Ok(netlist)
+    make_reader(actual_format).read(path.as_ref())
 }
 
 /// Read IBM .are file with module weights.
@@ -271,119 +153,6 @@ pub fn read_are<P: AsRef<Path>>(netlist: &mut Netlist, path: P) -> IoResult<()> 
     Ok(())
 }
 
-/// Read a netlist in hMetis format.
-///
-/// Ported from C++ `read_hmetis_format()` in `readwrite.cpp`.
-fn read_hmetis_format<P: AsRef<Path>>(path: P) -> IoResult<Netlist> {
-    let file = File::open(path.as_ref())?;
-    let reader = BufReader::new(file);
-    let mut lines = reader.lines();
-
-    let header = lines
-        .next()
-        .ok_or_else(|| IoError::ParseError {
-            line: 1,
-            message: "Empty file".to_string(),
-        })??
-        .trim()
-        .to_string();
-
-    let parts: Vec<&str> = header.split_whitespace().collect();
-    if parts.len() < 2 {
-        return Err(IoError::ParseError {
-            line: 1,
-            message: "Invalid hMetis header: expected at least 2 numbers".to_string(),
-        });
-    }
-
-    let num_nets: usize = parts[0].parse().map_err(|_| IoError::ParseError {
-        line: 1,
-        message: "Invalid numNets".to_string(),
-    })?;
-    let num_vertices: usize = parts[1].parse().map_err(|_| IoError::ParseError {
-        line: 1,
-        message: "Invalid numVertices".to_string(),
-    })?;
-
-    let mut netlist = Netlist::new();
-    for i in 0..num_vertices {
-        netlist
-            .add_module(format!("m{}", i))
-            .map_err(|e| IoError::ParseError {
-                line: 0,
-                message: e.to_string(),
-            })?;
-    }
-
-    let mut net_idx = 0usize;
-    for line in lines {
-        if net_idx >= num_nets {
-            break;
-        }
-        let line = line?;
-        let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.starts_with('c') {
-            continue;
-        }
-
-        let net_name = format!("n{}", net_idx);
-        let _ = netlist.add_net(net_name.clone());
-
-        if let Some(net_idx_val) = netlist.get_net_by_name(&net_name) {
-            for token in trimmed.split_whitespace() {
-                if let Ok(v) = token.parse::<usize>() {
-                    let v_idx = if v > 0 { v - 1 } else { v };
-                    if v_idx < num_vertices {
-                        let mod_name = format!("m{}", v_idx);
-                        if let Some(mod_idx) = netlist.get_module_by_name(&mod_name) {
-                            let _ = netlist.add_edge(net_idx_val, mod_idx);
-                        }
-                    }
-                }
-            }
-        }
-
-        net_idx += 1;
-    }
-
-    Ok(netlist)
-}
-
-/// Read a netlist in DIMACS format.
-///
-/// Ported from C++ `read_dimacs_format()` in `readwrite.cpp`.
-fn read_dimacs_format<P: AsRef<Path>>(path: P) -> IoResult<Netlist> {
-    let content = std::fs::read_to_string(path.as_ref())?;
-
-    let mut num_vertices: usize = 0;
-    let mut num_nets_out: usize = 0;
-
-    for line in content.lines() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.starts_with('c') || trimmed.starts_with('e') {
-            continue;
-        }
-        if trimmed.starts_with('p') {
-            let parts: Vec<&str> = trimmed.split_whitespace().collect();
-            if parts.len() >= 4 {
-                num_vertices = parts[2].parse().unwrap_or(0);
-                num_nets_out = parts[3].parse().unwrap_or(0);
-            }
-            break;
-        }
-    }
-
-    let mut netlist = Netlist::new();
-    for i in 0..num_vertices {
-        let _ = netlist.add_module(format!("m{}", i));
-    }
-    for i in 0..num_nets_out {
-        let _ = netlist.add_net(format!("n{}", i));
-    }
-
-    Ok(netlist)
-}
-
 /// Read a netlist from a Yosys JSON file.
 ///
 /// Yosys JSON format contains modules with cells (gates) and ports (I/O).
@@ -392,8 +161,7 @@ fn read_dimacs_format<P: AsRef<Path>>(path: P) -> IoResult<Netlist> {
 ///
 /// Ported from Python `read_yosys_json()` in `netlist.py`.
 pub fn read_yosys_json<P: AsRef<Path>>(path: P) -> IoResult<Netlist> {
-    let file = File::open(path.as_ref())?;
-    let reader = BufReader::new(file);
+    let reader = crate::reader::open_input(path.as_ref())?;
     let data: serde_json::Value = serde_json::from_reader(reader)?;
 
     let modules = data
@@ -415,40 +183,38 @@ pub fn read_yosys_json<P: AsRef<Path>>(path: P) -> IoResult<Netlist> {
         .get("ports")
         .ok_or_else(|| IoError::InvalidFormat("Missing 'ports'".to_string()))?;
 
-    // 1. Collect all cells and ports
-    let cell_names: Vec<String> = cells
-        .as_object()
-        .map(|m| m.keys().cloned().collect())
-        .unwrap_or_default();
-    let port_names: Vec<String> = ports
-        .as_object()
-        .map(|m| m.keys().cloned().collect())
-        .unwrap_or_default();
-    let _num_cells = cell_names.len();
-    let num_ports = port_names.len();
+    let mut parts = YosysParts::default();
 
-    // 2. Collect all unique net IDs (must be integers, skip strings like "0" constants)
-    let mut all_nets_set: HashSet<u32> = HashSet::new();
+    // 1. Collect all cells and ports (Map order)
+    if let Some(obj) = cells.as_object() {
+        parts.cell_names.extend(obj.keys().cloned());
+    }
+    if let Some(obj) = ports.as_object() {
+        parts.port_names.extend(obj.keys().cloned());
+    }
 
+    // 2. Collect all unique integer net IDs (skip string constants like "0")
+    //    Nets from port bits
     if let Some(ports_obj) = ports.as_object() {
         for port_info in ports_obj.values() {
             if let Some(bits) = port_info.get("bits").and_then(|b| b.as_array()) {
                 for bit in bits {
                     if let Some(n) = bit.as_u64() {
-                        all_nets_set.insert(n as u32);
+                        parts.all_net_ids.insert(n as u32);
                     }
                 }
             }
         }
     }
 
+    //    Nets from netnames
     if let Some(netnames) = module_data.get("netnames") {
         if let Some(obj) = netnames.as_object() {
             for netinfo in obj.values() {
                 if let Some(bits) = netinfo.get("bits").and_then(|b| b.as_array()) {
                     for bit in bits {
                         if let Some(n) = bit.as_u64() {
-                            all_nets_set.insert(n as u32);
+                            parts.all_net_ids.insert(n as u32);
                         }
                     }
                 }
@@ -456,71 +222,17 @@ pub fn read_yosys_json<P: AsRef<Path>>(path: P) -> IoResult<Netlist> {
         }
     }
 
+    //    Nets and edges from cell connections (skip string constants)
     if let Some(cells_obj) = cells.as_object() {
-        for cell_info in cells_obj.values() {
+        for (cell_idx, cell_info) in cells_obj.values().enumerate() {
             if let Some(connections) = cell_info.get("connections").and_then(|c| c.as_object()) {
-                for conn in connections.values() {
-                    if let Some(arr) = conn.as_array() {
-                        for net_id in arr {
-                            // Only add integer net IDs (skip string constants)
-                            if let Some(n) = net_id.as_u64() {
-                                all_nets_set.insert(n as u32);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    let mut nets_list: Vec<u32> = all_nets_set.into_iter().collect();
-    nets_list.sort();
-
-    // 3. Build the netlist
-    let mut netlist = Netlist::new();
-
-    // Add cells as modules (use original cell names)
-    for cell_name in &cell_names {
-        netlist
-            .add_module(cell_name.clone())
-            .map_err(|e| IoError::InvalidFormat(e.to_string()))?;
-    }
-
-    // Add ports as modules with "PORT_" prefix
-    for port_name in &port_names {
-        let port_mod = format!("PORT_{}", port_name);
-        netlist
-            .add_module(port_mod)
-            .map_err(|e| IoError::InvalidFormat(e.to_string()))?;
-    }
-
-    // Add nets (wire IDs as string names)
-    for net_id in &nets_list {
-        let net_name = net_id.to_string();
-        netlist
-            .add_net(net_name)
-            .map_err(|e| IoError::InvalidFormat(e.to_string()))?;
-    }
-
-    // 4. Add edges: cell connections
-    //    In the Python version: cells use original names, edges connect cell <-> net
-    if let Some(cells_obj) = cells.as_object() {
-        for (cell_name, cell_data) in cells_obj.iter() {
-            if let Some(connections) = cell_data.get("connections").and_then(|c| c.as_object()) {
                 for conn in connections.values() {
                     if let Some(arr) = conn.as_array() {
                         for net_id in arr {
                             if let Some(n) = net_id.as_u64() {
                                 let n = n as u32;
-                                if nets_list.contains(&n) {
-                                    let net_name = n.to_string();
-                                    if let (Some(net_idx), Some(cell_idx)) = (
-                                        netlist.get_net_by_name(&net_name),
-                                        netlist.get_module_by_name(cell_name),
-                                    ) {
-                                        let _ = netlist.add_edge(net_idx, cell_idx);
-                                    }
-                                }
+                                parts.all_net_ids.insert(n);
+                                parts.cell_edges.push((cell_idx, n));
                             }
                         }
                     }
@@ -529,70 +241,37 @@ pub fn read_yosys_json<P: AsRef<Path>>(path: P) -> IoResult<Netlist> {
         }
     }
 
-    // 5. Add edges: port connections
-    //    Each port connects to its bits.
+    // 3. Port connections
     if let Some(ports_obj) = ports.as_object() {
         for (port_name, port_info) in ports_obj.iter() {
-            if let Some(bits) = port_info.get("bits").and_then(|b| b.as_array()) {
-                for bit in bits {
-                    if let Some(n) = bit.as_u64() {
-                        let n = n as u32;
-                        if nets_list.contains(&n) {
-                            let net_name = n.to_string();
-                            let port_mod = format!("PORT_{}", port_name);
-                            if let (Some(net_idx), Some(mod_idx)) = (
-                                netlist.get_net_by_name(&net_name),
-                                netlist.get_module_by_name(&port_mod),
-                            ) {
-                                let _ = netlist.add_edge(net_idx, mod_idx);
-                            }
-                        }
-                    }
-                }
-            }
+            let bits: Vec<u32> = port_info
+                .get("bits")
+                .and_then(|b| b.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|bit| bit.as_u64().map(|n| n as u32))
+                        .collect()
+                })
+                .unwrap_or_default();
+            parts.port_bits.insert(port_name.clone(), bits);
         }
     }
 
-    // 6. Set metadata
-    netlist.num_pads = num_ports;
-
-    // Set module weights: cells = 1, ports = 0
-    for cell_name in &cell_names {
-        if let Some(idx) = netlist.get_module_by_name(cell_name) {
-            netlist.set_module_weight(idx, 1);
-        }
-    }
-    for port_name in &port_names {
-        let port_mod = format!("PORT_{}", port_name);
-        if let Some(idx) = netlist.get_module_by_name(&port_mod) {
-            netlist.set_module_weight(idx, 0);
-        }
-    }
-
-    // Mark ports as fixed
-    for port_name in &port_names {
-        let port_mod = format!("PORT_{}", port_name);
-        if let Some(idx) = netlist.get_module_by_name(&port_mod) {
-            netlist.module_fixed.insert(idx);
-        }
-    }
-    netlist.has_fixed_modules = num_ports > 0;
-
-    Ok(netlist)
+    build_netlist_from_parts(parts)
 }
 
 // ═══════════════════════════════════════════════════════════════════
-//  SAX-style streaming JSON parser for Yosys netlist files
+//  Streaming JSON parser (SAX) for Yosys netlist files
 // ═══════════════════════════════════════════════════════════════════
 //
 // Each JSON nesting level is handled by a dedicated "seed" type that
-// implements DeserializeSeed.  Seeds thread a &mut YosysSaxData through
+// implements DeserializeSeed.  Seeds thread a &mut YosysParts through
 // the recursive-descent parse tree — the Rust/serde analogue of nlohmann
 // SAX event handlers.
 
-/// Collected data from streaming parse; avoids building the full DOM tree.
+/// Intermediate representation shared by the DOM and SAX Yosys readers.
 #[derive(Default)]
-struct YosysSaxData {
+struct YosysParts {
     cell_names: Vec<String>,
     all_net_ids: BTreeSet<u32>,
     port_names: Vec<String>,
@@ -601,34 +280,34 @@ struct YosysSaxData {
 }
 
 struct TopSeed<'a> {
-    data: &'a mut YosysSaxData,
+    data: &'a mut YosysParts,
 }
 struct ModulesSeed<'a> {
-    data: &'a mut YosysSaxData,
+    data: &'a mut YosysParts,
 }
 struct ModuleSeed<'a> {
-    data: &'a mut YosysSaxData,
+    data: &'a mut YosysParts,
 }
 struct CellsSeed<'a> {
-    data: &'a mut YosysSaxData,
+    data: &'a mut YosysParts,
 }
 struct CellSeed<'a> {
-    data: &'a mut YosysSaxData,
+    data: &'a mut YosysParts,
     cell_idx: usize,
 }
 struct ConnectionsSeed<'a> {
-    data: &'a mut YosysSaxData,
+    data: &'a mut YosysParts,
     cell_idx: usize,
 }
 struct PortsSeed<'a> {
-    data: &'a mut YosysSaxData,
+    data: &'a mut YosysParts,
 }
 struct PortSeed<'a> {
-    data: &'a mut YosysSaxData,
+    data: &'a mut YosysParts,
     port_name: String,
 }
 struct NetnamesSeed<'a> {
-    data: &'a mut YosysSaxData,
+    data: &'a mut YosysParts,
 }
 
 impl<'de, 'a> DeserializeSeed<'de> for TopSeed<'a> {
@@ -642,7 +321,7 @@ impl<'de, 'a> DeserializeSeed<'de> for TopSeed<'a> {
         D: Deserializer<'de>,
     {
         struct TopVisitor<'a> {
-            data: &'a mut YosysSaxData,
+            data: &'a mut YosysParts,
         }
 
         impl<'de, 'a> Visitor<'de> for TopVisitor<'a> {
@@ -685,7 +364,7 @@ impl<'de, 'a> DeserializeSeed<'de> for ModulesSeed<'a> {
         D: Deserializer<'de>,
     {
         struct ModulesVisitor<'a> {
-            data: &'a mut YosysSaxData,
+            data: &'a mut YosysParts,
         }
 
         impl<'de, 'a> Visitor<'de> for ModulesVisitor<'a> {
@@ -721,7 +400,7 @@ impl<'de, 'a> DeserializeSeed<'de> for ModuleSeed<'a> {
         D: Deserializer<'de>,
     {
         struct ModuleVisitor<'a> {
-            data: &'a mut YosysSaxData,
+            data: &'a mut YosysParts,
         }
 
         impl<'de, 'a> Visitor<'de> for ModuleVisitor<'a> {
@@ -770,7 +449,7 @@ impl<'de, 'a> DeserializeSeed<'de> for CellsSeed<'a> {
         D: Deserializer<'de>,
     {
         struct CellsVisitor<'a> {
-            data: &'a mut YosysSaxData,
+            data: &'a mut YosysParts,
         }
 
         impl<'de, 'a> Visitor<'de> for CellsVisitor<'a> {
@@ -811,7 +490,7 @@ impl<'de, 'a> DeserializeSeed<'de> for CellSeed<'a> {
         D: Deserializer<'de>,
     {
         struct CellVisitor<'a> {
-            data: &'a mut YosysSaxData,
+            data: &'a mut YosysParts,
             cell_idx: usize,
         }
 
@@ -861,7 +540,7 @@ impl<'de, 'a> DeserializeSeed<'de> for ConnectionsSeed<'a> {
         D: Deserializer<'de>,
     {
         struct ConnectionsVisitor<'a> {
-            data: &'a mut YosysSaxData,
+            data: &'a mut YosysParts,
             cell_idx: usize,
         }
 
@@ -878,7 +557,7 @@ impl<'de, 'a> DeserializeSeed<'de> for ConnectionsSeed<'a> {
             {
                 while let Some(_port) = map.next_key::<String>()? {
                     struct ConnArraySeed<'a> {
-                        data: &'a mut YosysSaxData,
+                        data: &'a mut YosysParts,
                         cell_idx: usize,
                     }
 
@@ -893,7 +572,7 @@ impl<'de, 'a> DeserializeSeed<'de> for ConnectionsSeed<'a> {
                             D: Deserializer<'de>,
                         {
                             struct ConnArrayVisitor<'a> {
-                                data: &'a mut YosysSaxData,
+                                data: &'a mut YosysParts,
                                 cell_idx: usize,
                             }
 
@@ -958,7 +637,7 @@ impl<'de, 'a> DeserializeSeed<'de> for PortsSeed<'a> {
         D: Deserializer<'de>,
     {
         struct PortsVisitor<'a> {
-            data: &'a mut YosysSaxData,
+            data: &'a mut YosysParts,
         }
 
         impl<'de, 'a> Visitor<'de> for PortsVisitor<'a> {
@@ -998,7 +677,7 @@ impl<'de, 'a> DeserializeSeed<'de> for PortSeed<'a> {
         D: Deserializer<'de>,
     {
         struct PortVisitor<'a> {
-            data: &'a mut YosysSaxData,
+            data: &'a mut YosysParts,
             port_name: String,
         }
 
@@ -1016,7 +695,7 @@ impl<'de, 'a> DeserializeSeed<'de> for PortSeed<'a> {
                 while let Some(key) = map.next_key::<String>()? {
                     if key == "bits" {
                         struct PortBitsSeed<'a> {
-                            data: &'a mut YosysSaxData,
+                            data: &'a mut YosysParts,
                             port_name: String,
                         }
 
@@ -1031,7 +710,7 @@ impl<'de, 'a> DeserializeSeed<'de> for PortSeed<'a> {
                                 D: Deserializer<'de>,
                             {
                                 struct PortBitsVisitor<'a> {
-                                    data: &'a mut YosysSaxData,
+                                    data: &'a mut YosysParts,
                                     port_name: String,
                                 }
 
@@ -1097,7 +776,7 @@ impl<'de, 'a> DeserializeSeed<'de> for NetnamesSeed<'a> {
         D: Deserializer<'de>,
     {
         struct NetnamesVisitor<'a> {
-            data: &'a mut YosysSaxData,
+            data: &'a mut YosysParts,
         }
 
         impl<'de, 'a> Visitor<'de> for NetnamesVisitor<'a> {
@@ -1113,7 +792,7 @@ impl<'de, 'a> DeserializeSeed<'de> for NetnamesSeed<'a> {
             {
                 while let Some(_net_name) = map.next_key::<String>()? {
                     struct NetnameEntrySeed<'a> {
-                        data: &'a mut YosysSaxData,
+                        data: &'a mut YosysParts,
                     }
 
                     impl<'de, 'a> DeserializeSeed<'de> for NetnameEntrySeed<'a> {
@@ -1127,7 +806,7 @@ impl<'de, 'a> DeserializeSeed<'de> for NetnamesSeed<'a> {
                             D: Deserializer<'de>,
                         {
                             struct NetnameEntryVisitor<'a> {
-                                data: &'a mut YosysSaxData,
+                                data: &'a mut YosysParts,
                             }
 
                             impl<'de, 'a> Visitor<'de> for NetnameEntryVisitor<'a> {
@@ -1147,7 +826,7 @@ impl<'de, 'a> DeserializeSeed<'de> for NetnamesSeed<'a> {
                                     while let Some(key) = map.next_key::<String>()? {
                                         if key == "bits" {
                                             struct BitsSeed<'a> {
-                                                data: &'a mut YosysSaxData,
+                                                data: &'a mut YosysParts,
                                             }
 
                                             impl<'de, 'a> DeserializeSeed<'de> for BitsSeed<'a> {
@@ -1161,7 +840,7 @@ impl<'de, 'a> DeserializeSeed<'de> for NetnamesSeed<'a> {
                                                     D: Deserializer<'de>,
                                                 {
                                                     struct BitsVisitor<'a> {
-                                                        data: &'a mut YosysSaxData,
+                                                        data: &'a mut YosysParts,
                                                     }
 
                                                     impl<'de, 'a> Visitor<'de> for BitsVisitor<'a> {
@@ -1237,24 +916,25 @@ impl<'de, 'a> DeserializeSeed<'de> for NetnamesSeed<'a> {
 /// Returns an error if the file cannot be read, the JSON is malformed, or
 /// required keys ("modules", "cells", "ports") are missing.
 pub fn read_yosys_json_sax<P: AsRef<Path>>(path: P) -> IoResult<Netlist> {
-    let file = File::open(path.as_ref())?;
-    let reader = BufReader::new(file);
+    let reader = crate::reader::open_input(path.as_ref())?;
     let mut de = JsonDeserializer::from_reader(reader);
 
-    let mut data = YosysSaxData::default();
+    let mut parts = YosysParts::default();
 
-    TopSeed { data: &mut data }
+    TopSeed { data: &mut parts }
         .deserialize(&mut de)
         .map_err(IoError::JsonError)?;
 
-    if data.cell_names.is_empty() && data.port_names.is_empty() {
+    if parts.cell_names.is_empty() && parts.port_names.is_empty() {
         return Err(IoError::InvalidFormat("Missing 'modules' key".to_string()));
     }
 
-    build_netlist_from_sax_data(data)
+    build_netlist_from_parts(parts)
 }
 
-fn build_netlist_from_sax_data(data: YosysSaxData) -> IoResult<Netlist> {
+/// Build a Netlist from parsed Yosys parts (shared phase 2 of the DOM and
+/// SAX readers).
+fn build_netlist_from_parts(data: YosysParts) -> IoResult<Netlist> {
     let cell_names = data.cell_names;
     let port_names = data.port_names;
     let nets_list: Vec<u32> = data.all_net_ids.into_iter().collect();
@@ -1450,24 +1130,6 @@ pub fn read_node_link_json<P: AsRef<Path>>(path: P) -> IoResult<Netlist> {
     }
 
     Ok(netlist)
-}
-
-/// Read JSON format: tries Yosys JSON first, falls back to node-link JSON.
-fn read_json_format<P: AsRef<Path>>(path: P) -> IoResult<Netlist> {
-    // Read the file content first
-    let content = std::fs::read_to_string(path.as_ref())?;
-    let data: serde_json::Value = serde_json::from_str(&content)?;
-
-    // Detect format: has "modules" key → Yosys, otherwise → node-link
-    if data.get("modules").is_some() {
-        // Re-parse as Yosys format
-        drop(data);
-        read_yosys_json(path)
-    } else {
-        // Node-link format
-        drop(data);
-        read_node_link_json(path)
-    }
 }
 
 /// Write a netlist to JSON format.

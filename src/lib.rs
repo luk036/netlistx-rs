@@ -12,6 +12,8 @@ pub mod statistics;
 pub mod trigonom;
 pub mod tsp;
 
+mod reader;
+
 pub use cover::min_hyper_vertex_cover;
 pub use factory::{
     create_drawf, create_inverter, create_inverter2, create_random_hgraph, create_test_netlist,
