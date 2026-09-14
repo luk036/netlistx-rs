@@ -132,11 +132,18 @@ fn mst(grph: &Graph<String, f64, petgraph::Undirected>) -> Vec<(usize, usize)> {
     result
 }
 
+/// Above this many odd vertices the exact subset DP is replaced by a greedy
+/// matching (matching the C++ `xnetwork-cpp` dispatch). `2^18 = 262144` states
+/// is the largest subset DP that stays cheap.
+const EXACT_MWPM_MAX: usize = 18;
+
 /// Minimum weight perfect matching on a complete subgraph (odd vertices).
 ///
 /// $$ \min_{M} \sum_{\{i,j\} \in M} d_{ij}, \quad \text{every vertex appears in exactly one pair} $$
 ///
-/// Uses DP over subsets ($O(k \cdot 2^k)$ for $k$ odd vertices).
+/// Uses DP over subsets ($O(k \cdot 2^k)$) for $k \le$ `EXACT_MWPM_MAX`, and a
+/// greedy heuristic ($O(k^2 \log k)$) beyond that so large instances do not
+/// attempt an exponential allocation.
 fn min_weight_perfect_matching_edge(
     grph: &Graph<String, f64, petgraph::Undirected>,
     odd_nodes: &[usize],
@@ -155,6 +162,12 @@ fn min_weight_perfect_matching_edge(
             dist[i][j] = d;
             dist[j][i] = d;
         }
+    }
+
+    // Exact subset DP is exponential; fall back to a greedy matching for large k
+    // so a big instance cannot attempt an unbounded `1 << k` allocation.
+    if k > EXACT_MWPM_MAX {
+        return greedy_matching(&dist, odd_nodes, k);
     }
 
     // DP over subsets
@@ -207,6 +220,32 @@ fn min_weight_perfect_matching_edge(
         }
     }
 
+    matching
+}
+
+/// Greedy minimum-weight perfect matching: sort candidate pairs by distance and
+/// repeatedly take the cheapest pair whose endpoints are both still unmatched.
+///
+/// $O(k^2 \log k)$. Used when the exact subset DP would be exponential; like the
+/// C++ port this is a heuristic (it does not carry the 3/2 guarantee).
+fn greedy_matching(dist: &[Vec<f64>], odd_nodes: &[usize], k: usize) -> Vec<(usize, usize)> {
+    let mut pairs: Vec<(f64, usize, usize)> = Vec::with_capacity(k * (k - 1) / 2);
+    for (i, row) in dist.iter().enumerate() {
+        for (j, &d) in row.iter().enumerate().skip(i + 1) {
+            pairs.push((d, i, j));
+        }
+    }
+    pairs.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+
+    let mut used = vec![false; k];
+    let mut matching = Vec::with_capacity(k / 2);
+    for (_, i, j) in pairs {
+        if !used[i] && !used[j] {
+            matching.push((odd_nodes[i], odd_nodes[j]));
+            used[i] = true;
+            used[j] = true;
+        }
+    }
     matching
 }
 
@@ -305,23 +344,45 @@ fn shortcut_eulerian(circuit: &[usize]) -> Vec<usize> {
 /// A new tour is accepted if it has a lower total distance.
 pub fn two_opt(path: &[usize], grph: &Graph<String, f64, petgraph::Undirected>) -> Vec<usize> {
     let mut best_path = path.to_vec();
-    let mut improved = true;
+    let n = best_path.len();
+    if n < 4 {
+        return best_path;
+    }
 
+    // O(1) edge-weight lookup matrix (the graph is dense/complete for TSP).
+    let nnodes = grph.node_count();
+    let mut w = vec![vec![f64::INFINITY; nnodes]; nnodes];
+    for edge_idx in grph.edge_indices() {
+        let (a, b) = grph.edge_endpoints(edge_idx).unwrap();
+        let (ai, bi) = (a.index(), b.index());
+        let weight = grph[edge_idx];
+        w[ai][bi] = weight;
+        w[bi][ai] = weight;
+    }
+
+    let mut improved = true;
     while improved {
         improved = false;
-        for i in 1..best_path.len().saturating_sub(2) {
-            for j in (i + 1)..best_path.len() {
+        for i in 1..n.saturating_sub(2) {
+            let mut prev = best_path[i - 1];
+            let mut cur = best_path[i];
+            let mut d_prev_cur = w[prev][cur];
+            for j in (i + 1)..n {
                 if j - i == 1 {
                     continue;
                 }
-                // Reverse segment [i, j-1]
-                let mut new_path = best_path[..i].to_vec();
-                new_path.extend(best_path[i..j].iter().rev());
-                new_path.extend_from_slice(&best_path[j..]);
-
-                if total_distance(&new_path, grph) < total_distance(&best_path, grph) {
-                    best_path = new_path;
+                // O(1) delta for reversing [i, j-1]:
+                // (i-1, i) + (j-1, j)  ->  (i-1, j-1) + (i, j)
+                let nxt = best_path[j - 1];
+                let after = best_path[j];
+                let delta = w[prev][nxt] + w[cur][after] - d_prev_cur - w[nxt][after];
+                // epsilon rejects float-noise no-op reversals that would loop
+                if delta < -1e-9 {
+                    best_path[i..j].reverse();
                     improved = true;
+                    prev = best_path[i - 1];
+                    cur = best_path[i];
+                    d_prev_cur = w[prev][cur];
                 }
             }
         }
@@ -598,5 +659,33 @@ mod tests {
         let tour = two_opt(&[0, 1, 2, 0], &grph);
         assert_eq!(tour.len(), 4);
         assert_eq!(tour[0], tour[tour.len() - 1]);
+    }
+
+    #[test]
+    fn test_mwpm_greedy_fallback_large_k() {
+        // 24 odd vertices (> EXACT_MWPM_MAX) must use the greedy path, not the
+        // exponential subset DP.
+        let (grph, _) = make_l2_graph(24, 7);
+        let odd_nodes: Vec<usize> = (0..24).collect();
+        let matching = min_weight_perfect_matching_edge(&grph, &odd_nodes);
+        assert_eq!(matching.len(), 12);
+        let mut used = [false; 24];
+        for &(i, j) in &matching {
+            assert!(!used[i] && !used[j], "vertex matched twice");
+            used[i] = true;
+            used[j] = true;
+        }
+        assert!(used.iter().all(|&u| u), "every odd vertex must be matched");
+    }
+
+    #[test]
+    fn test_christofides_large_no_crash() {
+        // Regression: n=100 used to abort with an exponential MWPM allocation.
+        let (grph, _) = make_l2_graph(100, 3);
+        let tour = solve_christofides_2opt_tsp(&grph);
+        assert_eq!(tour.len(), 101);
+        assert_eq!(tour[0], tour[100]);
+        let visited: HashSet<usize> = tour[..100].iter().copied().collect();
+        assert_eq!(visited.len(), 100);
     }
 }

@@ -12,6 +12,66 @@ use std::collections::VecDeque;
 use std::ops::Add;
 use std::ops::Sub;
 
+/// Phase 1 of the primal-dual algorithm: grow the dual variables (gaps) until
+/// every violating set is hit, recording the vertices added to the solution.
+fn primal_dual_selection<F, W>(
+    violate: &mut F,
+    weight: &HashMap<String, W>,
+    soln: &mut HashSet<String>,
+) -> Vec<String>
+where
+    F: FnMut(&HashSet<String>) -> Vec<Vec<String>>,
+    W: Copy + Add<Output = W> + Sub<Output = W> + PartialOrd + Default,
+{
+    let mut gap: HashMap<String, W> = HashMap::new();
+    let mut added_order: Vec<String> = Vec::new();
+
+    loop {
+        let viol_sets = violate(soln);
+        if viol_sets.is_empty() {
+            break;
+        }
+        let set = viol_sets.into_iter().next().unwrap();
+        if set.is_empty() {
+            continue;
+        }
+
+        let min_vtx = set
+            .iter()
+            .min_by(|&v1, &v2| {
+                let g1 = gap.get(v1).copied().unwrap_or(weight[v1]);
+                let g2 = gap.get(v2).copied().unwrap_or(weight[v2]);
+                g1.partial_cmp(&g2).unwrap_or(std::cmp::Ordering::Equal)
+            })
+            .cloned()
+            .expect("set should not be empty");
+
+        let min_val = gap.get(&min_vtx).copied().unwrap_or(weight[&min_vtx]);
+
+        if !soln.contains(&min_vtx) {
+            soln.insert(min_vtx.clone());
+            added_order.push(min_vtx.clone());
+        }
+
+        for vtx in &set {
+            let entry = gap.entry(vtx.clone()).or_insert(weight[vtx]);
+            *entry = *entry - min_val;
+        }
+    }
+
+    added_order
+}
+
+/// Total weight of a solution.
+fn primal_cost<W>(weight: &HashMap<String, W>, soln: &HashSet<String>) -> W
+where
+    W: Copy + Add<Output = W> + Default,
+{
+    soln.iter()
+        .map(|vtx| weight.get(vtx).copied().unwrap_or(W::default()))
+        .fold(W::default(), |acc, w| acc + w)
+}
+
 /// Generic primal-dual approximation algorithm with reverse-delete post-processing.
 ///
 /// Solves the weighted set cover problem via primal-dual:
@@ -33,46 +93,7 @@ where
     F: FnMut(&HashSet<String>) -> Vec<Vec<String>>,
     W: Copy + Add<Output = W> + Sub<Output = W> + PartialOrd + Default,
 {
-    let mut gap: HashMap<String, W> = HashMap::new();
-    let mut added_order: Vec<String> = Vec::new();
-    let mut total_dual_cost: W = W::default();
-
-    // Phase 1: Primal-Dual Selection
-    loop {
-        let viol_sets = violate(soln);
-        if viol_sets.is_empty() {
-            break;
-        }
-        // Take the first violating set
-        let set = viol_sets.into_iter().next().unwrap();
-        if set.is_empty() {
-            continue;
-        }
-
-        // Find element with minimum gap in this violating set
-        let min_vtx = set
-            .iter()
-            .min_by(|&v1, &v2| {
-                let g1 = gap.get(v1).copied().unwrap_or(weight[v1]);
-                let g2 = gap.get(v2).copied().unwrap_or(weight[v2]);
-                g1.partial_cmp(&g2).unwrap_or(std::cmp::Ordering::Equal)
-            })
-            .cloned()
-            .expect("set should not be empty");
-
-        let min_val = gap.get(&min_vtx).copied().unwrap_or(weight[&min_vtx]);
-
-        if !soln.contains(&min_vtx) {
-            soln.insert(min_vtx.clone());
-            added_order.push(min_vtx.clone());
-        }
-
-        total_dual_cost = total_dual_cost + min_val;
-        for vtx in &set {
-            let entry = gap.entry(vtx.clone()).or_insert(weight[vtx]);
-            *entry = *entry - min_val;
-        }
-    }
+    let added_order = primal_dual_selection(&mut violate, weight, soln);
 
     // Phase 2: Reverse-Delete Post-Processing
     for vtx in added_order.iter().rev() {
@@ -84,11 +105,36 @@ where
         }
     }
 
-    let final_primal_cost: W = soln
-        .iter()
-        .map(|vtx| weight.get(vtx).copied().unwrap_or(W::default()))
-        .fold(W::default(), |acc, w| acc + w);
+    let final_primal_cost = primal_cost(weight, soln);
+    (soln.clone(), final_primal_cost)
+}
 
+/// Like [`pd_cover`], but takes a cheap per-vertex redundancy predicate for the
+/// reverse-delete phase instead of re-running the violator.
+///
+/// Removing `vtx` can only expose sets incident to `vtx`, so `redundant` can be
+/// an O(deg) local test (e.g. a vertex cover checks only its neighbours).
+pub fn pd_cover_with<F, R, W>(
+    mut violate: F,
+    weight: &HashMap<String, W>,
+    soln: &mut HashSet<String>,
+    redundant: R,
+) -> (HashSet<String>, W)
+where
+    F: FnMut(&HashSet<String>) -> Vec<Vec<String>>,
+    R: Fn(&str, &HashSet<String>) -> bool,
+    W: Copy + Add<Output = W> + Sub<Output = W> + PartialOrd + Default,
+{
+    let added_order = primal_dual_selection(&mut violate, weight, soln);
+
+    for vtx in added_order.iter().rev() {
+        soln.remove(vtx);
+        if !redundant(vtx, soln) {
+            soln.insert(vtx.clone());
+        }
+    }
+
+    let final_primal_cost = primal_cost(weight, soln);
     (soln.clone(), final_primal_cost)
 }
 
@@ -106,7 +152,9 @@ pub fn min_vertex_cover<W>(
 where
     W: Copy + Add<Output = W> + Sub<Output = W> + PartialOrd + Default,
 {
-    let current_coverset = coverset.clone();
+    let node_index: HashMap<String, petgraph::graph::NodeIndex> =
+        grph.node_indices().map(|i| (grph[i].clone(), i)).collect();
+
     let violate_fn = |soln: &HashSet<String>| -> Vec<Vec<String>> {
         let mut result = Vec::new();
         for edge in grph.raw_edges() {
@@ -119,8 +167,17 @@ where
         result
     };
 
-    let mut soln = current_coverset;
-    pd_cover(violate_fn, weight, &mut soln)
+    // Removing a vertex can only expose edges incident to it, so redundancy is
+    // an O(deg) neighbour check instead of an O(E) rescan of every edge.
+    let redundant = |vtx: &str, soln: &HashSet<String>| -> bool {
+        match node_index.get(vtx) {
+            Some(&idx) => grph.neighbors(idx).all(|n| soln.contains(&grph[n])),
+            None => false,
+        }
+    };
+
+    let mut soln = coverset.clone();
+    pd_cover_with(violate_fn, weight, &mut soln, redundant)
 }
 
 /// Minimum weighted vertex cover (regular graph) — convenience version.
@@ -195,62 +252,58 @@ fn generic_bfs_cycle(
     grph: &petgraph::Graph<String, (), petgraph::Undirected>,
     coverset: &HashSet<String>,
 ) -> Vec<Vec<String>> {
-    let mut cycles: Vec<Vec<String>> = Vec::new();
     let mut visited: HashSet<String> = HashSet::new();
     let mut parent: HashMap<String, Option<String>> = HashMap::new();
     let mut depth: HashMap<String, usize> = HashMap::new();
 
-    for node_idx in grph.node_indices() {
-        let source = &grph[node_idx];
-        if coverset.contains(source) || visited.contains(source) {
+    for start_idx in grph.node_indices() {
+        let source = grph[start_idx].clone();
+        if coverset.contains(&source) || visited.contains(&source) {
             continue;
         }
 
         parent.clear();
         depth.clear();
-        let mut queue: VecDeque<String> = VecDeque::new();
+        // Queue stores node indices so neighbours need no O(V) name lookup.
+        let mut queue: VecDeque<petgraph::graph::NodeIndex> = VecDeque::new();
 
         parent.insert(source.clone(), None);
         depth.insert(source.clone(), 0);
-        queue.push_back(source.clone());
-        visited.insert(source.clone());
+        queue.push_back(start_idx);
+        visited.insert(source);
 
-        while let Some(current) = queue.pop_front() {
-            let current_depth = *depth.get(&current).unwrap_or(&0);
-            let current_idx = grph
-                .node_indices()
-                .find(|i| grph[*i] == current)
-                .expect("node not found");
+        while let Some(current_idx) = queue.pop_front() {
+            let current = grph[current_idx].clone();
+            let current_depth = depth[&current];
 
             for neighbor_idx in grph.neighbors(current_idx) {
-                let neighbor = &grph[neighbor_idx];
-                if coverset.contains(neighbor) {
+                let neighbor = grph[neighbor_idx].clone();
+                if coverset.contains(&neighbor) {
                     continue;
                 }
-                if !depth.contains_key(neighbor) {
+                if !depth.contains_key(&neighbor) {
                     parent.insert(neighbor.clone(), Some(current.clone()));
                     depth.insert(neighbor.clone(), current_depth + 1);
-                    queue.push_back(neighbor.clone());
-                    visited.insert(neighbor.clone());
-                } else if depth[neighbor] != current_depth - 1 {
+                    queue.push_back(neighbor_idx);
+                    visited.insert(neighbor);
+                } else if depth[&neighbor] != current_depth.saturating_sub(1) {
                     // Found a back edge (not the direct parent)
                     let is_direct_parent = parent
                         .get(&current)
                         .and_then(|p| p.as_ref())
-                        .map(|p| p == neighbor)
+                        .map(|p| p == &neighbor)
                         .unwrap_or(false);
                     if !is_direct_parent {
-                        let cycle = construct_cycle(&parent, &depth, &current, neighbor);
-                        cycles.push(cycle);
+                        let cycle = construct_cycle(&parent, &depth, &current, &neighbor);
                         // Only find one cycle per BFS to avoid duplicates
-                        return cycles;
+                        return vec![cycle];
                     }
                 }
             }
         }
     }
 
-    cycles
+    Vec::new()
 }
 
 /// Minimum weighted set of vertices covering all cycles.

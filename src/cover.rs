@@ -2,22 +2,13 @@ use std::collections::HashSet;
 
 use crate::netlist::Netlist;
 
-/// Primal-dual approximation algorithm for covering problems.
-///
-/// Implements the primal-dual paradigm for set cover:
-///
-/// $$ \min \sum_{v \in C} w(v) \quad \text{s.t.} \quad C \cap S \neq \varnothing \; \forall S \in \mathcal{V} $$
-///
-/// where $\mathcal{V}$ is the set of violating sets and $w(v)$ are vertex weights.
-///
-/// Generic framework that works with any violate function that produces
-/// sets of vertices, a weight function for vertices, and a solution set.
-/// The `soln` parameter is the current solution set modified in-place.
-pub fn pd_cover<F, W>(
-    mut violate: F,
+/// Phase 1 of the primal-dual algorithm: grow the dual variables (gaps) until
+/// every violating set is hit, recording the vertices added to the solution.
+fn primal_dual_selection<F, W>(
+    violate: &mut F,
     weight: &[W],
     soln: &mut HashSet<usize>,
-) -> (HashSet<usize>, W)
+) -> Vec<usize>
 where
     F: FnMut(&HashSet<usize>) -> Vec<Vec<usize>>,
     W: Copy
@@ -56,20 +47,88 @@ where
         }
     }
 
+    added_order
+}
+
+/// Total weight of a solution.
+fn primal_cost<W>(weight: &[W], soln: &HashSet<usize>) -> W
+where
+    W: Copy + std::ops::Add<Output = W> + Default,
+{
+    soln.iter()
+        .map(|vtx| weight[*vtx])
+        .fold(W::default(), |acc, w| acc + w)
+}
+
+/// Primal-dual approximation algorithm for covering problems.
+///
+/// Implements the primal-dual paradigm for set cover:
+///
+/// $$ \min \sum_{v \in C} w(v) \quad \text{s.t.} \quad C \cap S \neq \varnothing \; \forall S \in \mathcal{V} $$
+///
+/// where $\mathcal{V}$ is the set of violating sets and $w(v)$ are vertex weights.
+///
+/// Generic framework that works with any violate function that produces
+/// sets of vertices, a weight function for vertices, and a solution set.
+/// The `soln` parameter is the current solution set modified in-place.
+pub fn pd_cover<F, W>(
+    mut violate: F,
+    weight: &[W],
+    soln: &mut HashSet<usize>,
+) -> (HashSet<usize>, W)
+where
+    F: FnMut(&HashSet<usize>) -> Vec<Vec<usize>>,
+    W: Copy
+        + std::ops::Add<Output = W>
+        + std::ops::Sub<Output = W>
+        + std::cmp::PartialOrd
+        + Default,
+{
+    let added_order = primal_dual_selection(&mut violate, weight, soln);
+
+    // Phase 2: reverse-delete, re-validating by re-running the violator.
     for vtx in added_order.iter().rev() {
         soln.remove(vtx);
         let violates = violate(soln);
-        let any_violated = violates.iter().any(|s| !s.is_empty());
-        if any_violated {
+        if violates.iter().any(|s| !s.is_empty()) {
             soln.insert(*vtx);
         }
     }
 
-    let final_primal_cost: W = soln
-        .iter()
-        .map(|vtx| weight[*vtx])
-        .fold(W::default(), |acc, w| acc + w);
+    let final_primal_cost = primal_cost(weight, soln);
+    (soln.clone(), final_primal_cost)
+}
 
+/// Like [`pd_cover`], but takes a cheap per-vertex redundancy predicate for the
+/// reverse-delete phase instead of re-running the violator.
+///
+/// Removing `vtx` can only expose sets incident to `vtx`, so `redundant` can be
+/// an O(deg) local test (e.g. a vertex cover checks only its neighbours).
+pub fn pd_cover_with<F, R, W>(
+    mut violate: F,
+    weight: &[W],
+    soln: &mut HashSet<usize>,
+    redundant: R,
+) -> (HashSet<usize>, W)
+where
+    F: FnMut(&HashSet<usize>) -> Vec<Vec<usize>>,
+    R: Fn(usize, &HashSet<usize>) -> bool,
+    W: Copy
+        + std::ops::Add<Output = W>
+        + std::ops::Sub<Output = W>
+        + std::cmp::PartialOrd
+        + Default,
+{
+    let added_order = primal_dual_selection(&mut violate, weight, soln);
+
+    for vtx in added_order.iter().rev() {
+        soln.remove(vtx);
+        if !redundant(*vtx, soln) {
+            soln.insert(*vtx);
+        }
+    }
+
+    let final_primal_cost = primal_cost(weight, soln);
     (soln.clone(), final_primal_cost)
 }
 
@@ -100,7 +159,18 @@ where
         result
     };
 
-    pd_cover(violate_fn, weight, coverset)
+    // Removing a vertex can only expose nets incident to it, so redundancy is
+    // an O(deg) check over its nets instead of a rescan of every net.
+    let redundant = |vtx: usize, current_soln: &HashSet<usize>| -> bool {
+        netlist.get_module_nets(vtx).iter().all(|&net| {
+            netlist
+                .get_net_modules(net)
+                .iter()
+                .any(|m| current_soln.contains(m))
+        })
+    };
+
+    pd_cover_with(violate_fn, weight, coverset, redundant)
 }
 
 /// Convenience overload that creates an empty coverset.
