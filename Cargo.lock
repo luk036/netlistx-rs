@@ -459,12 +459,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "88904434abc2901f197fe8cc55f0445e7ded921dba5911dad2e2b39b48e663c4"
 
 [[package]]
+name = "mwmatching"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f13b50448d988736cc2c938a76ae336241fcb31a225017c0e3121bd349e7dc06"
+
+[[package]]
 name = "netlistx-rs"
 version = "0.1.5"
 dependencies = [
  "criterion",
  "cudarc",
  "indexmap",
+ "mwmatching",
  "netlistx-rs",
  "num-rational",
  "petgraph",

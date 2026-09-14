@@ -1,3 +1,4 @@
+use mwmatching::{Matching, SENTINEL};
 use petgraph::graph::NodeIndex;
 use petgraph::Graph;
 use std::collections::HashMap;
@@ -132,18 +133,14 @@ fn mst(grph: &Graph<String, f64, petgraph::Undirected>) -> Vec<(usize, usize)> {
     result
 }
 
-/// Above this many odd vertices the exact subset DP is replaced by a greedy
-/// matching (matching the C++ `xnetwork-cpp` dispatch). `2^18 = 262144` states
-/// is the largest subset DP that stays cheap.
-const EXACT_MWPM_MAX: usize = 18;
-
 /// Minimum weight perfect matching on a complete subgraph (odd vertices).
 ///
 /// $$ \min_{M} \sum_{\{i,j\} \in M} d_{ij}, \quad \text{every vertex appears in exactly one pair} $$
 ///
-/// Uses DP over subsets ($O(k \cdot 2^k)$) for $k \le$ `EXACT_MWPM_MAX`, and a
-/// greedy heuristic ($O(k^2 \log k)$) beyond that so large instances do not
-/// attempt an exponential allocation.
+/// Uses Edmonds' blossom algorithm ($O(k^3)$) via `mwmatching`. This replaces
+/// the previous bitmask DP, which was exponential and — because it only ever
+/// reached masks containing the first vertex — reconstructed a wrong matching
+/// for `k > 2`.
 fn min_weight_perfect_matching_edge(
     grph: &Graph<String, f64, petgraph::Undirected>,
     odd_nodes: &[usize],
@@ -164,86 +161,48 @@ fn min_weight_perfect_matching_edge(
         }
     }
 
-    // Exact subset DP is exponential; fall back to a greedy matching for large k
-    // so a big instance cannot attempt an unbounded `1 << k` allocation.
-    if k > EXACT_MWPM_MAX {
-        return greedy_matching(&dist, odd_nodes, k);
-    }
+    blossom_matching(&dist, odd_nodes, k)
+}
 
-    // DP over subsets
-    let size = 1 << k;
-    let mut dp = vec![f64::INFINITY; size];
-    let mut choice = vec![k; size];
-    dp[0] = 0.0;
-
-    for mask in 0..size {
-        if dp[mask] == f64::INFINITY {
-            continue;
-        }
-        let mut i = 0;
-        while i < k && (mask & (1 << i)) != 0 {
-            i += 1;
-        }
-        if i >= k {
-            continue;
-        }
-        for (j, _) in dist.iter().enumerate().take(k).skip(i + 1) {
-            if (mask & (1 << j)) == 0 {
-                let new_mask = mask | (1 << i) | (1 << j);
-                let new_cost = dp[mask] + dist[i][j];
-                if new_cost < dp[new_mask] {
-                    dp[new_mask] = new_cost;
-                    choice[new_mask] = j;
-                }
+/// Minimum-weight perfect matching via Edmonds' blossom algorithm.
+///
+/// $O(k^3)$ primal-dual blossom (via the `mwmatching` crate, a port of Joris
+/// van Rantwijk's algorithm). Distances are normalized and scaled to positive
+/// `i32` weights `w = C - cost` (`C > max cost`), so maximizing weight minimizes
+/// cost, and maximum cardinality forces a perfect matching. Unlike the greedy
+/// fallback this preserves Christofides' 3/2 bound.
+fn blossom_matching(dist: &[Vec<f64>], odd_nodes: &[usize], k: usize) -> Vec<(usize, usize)> {
+    // Normalize, then scale so the i32 weights stay well inside range: the
+    // solver's dual variables peak near 4x the maximum weight.
+    let mut max_d = 0.0f64;
+    for (i, row) in dist.iter().enumerate() {
+        for &d in row.iter().skip(i + 1) {
+            if d > max_d {
+                max_d = d;
             }
         }
     }
+    let scale = if max_d.is_finite() && max_d > 0.0 {
+        1.0e6 / max_d
+    } else {
+        0.0
+    };
+    let c_const = (max_d * scale).round() as i32 + 1;
 
-    // Reconstruct
-    let mut matching = Vec::new();
-    let mut mask = size - 1;
-    while mask != 0 {
-        let mut i = 0;
-        while i < k && (mask & (1 << i)) == 0 {
-            i += 1;
-        }
-        if i >= k {
-            break;
-        }
-        let j = choice[mask];
-        if j < k {
-            matching.push((odd_nodes[i], odd_nodes[j]));
-            mask &= !(1 << i);
-            mask &= !(1 << j);
-        } else {
-            break;
-        }
-    }
-
-    matching
-}
-
-/// Greedy minimum-weight perfect matching: sort candidate pairs by distance and
-/// repeatedly take the cheapest pair whose endpoints are both still unmatched.
-///
-/// $O(k^2 \log k)$. Used when the exact subset DP would be exponential; like the
-/// C++ port this is a heuristic (it does not carry the 3/2 guarantee).
-fn greedy_matching(dist: &[Vec<f64>], odd_nodes: &[usize], k: usize) -> Vec<(usize, usize)> {
-    let mut pairs: Vec<(f64, usize, usize)> = Vec::with_capacity(k * (k - 1) / 2);
+    let mut edges: Vec<(usize, usize, i32)> = Vec::with_capacity(k * (k - 1) / 2);
     for (i, row) in dist.iter().enumerate() {
         for (j, &d) in row.iter().enumerate().skip(i + 1) {
-            pairs.push((d, i, j));
+            let cost = (d * scale).round() as i32;
+            edges.push((i, j, c_const - cost));
         }
     }
-    pairs.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
 
-    let mut used = vec![false; k];
+    let mates = Matching::new(edges).max_cardinality().solve();
+
     let mut matching = Vec::with_capacity(k / 2);
-    for (_, i, j) in pairs {
-        if !used[i] && !used[j] {
-            matching.push((odd_nodes[i], odd_nodes[j]));
-            used[i] = true;
-            used[j] = true;
+    for (i, &m) in mates.iter().enumerate() {
+        if i < m && m != SENTINEL {
+            matching.push((odd_nodes[i], odd_nodes[m]));
         }
     }
     matching
@@ -662,8 +621,8 @@ mod tests {
     }
 
     #[test]
-    fn test_mwpm_greedy_fallback_large_k() {
-        // 24 odd vertices (> EXACT_MWPM_MAX) must use the greedy path, not the
+    fn test_mwpm_blossom_large_k() {
+        // 24 odd vertices (> EXACT_MWPM_MAX) must use the blossom path, not the
         // exponential subset DP.
         let (grph, _) = make_l2_graph(24, 7);
         let odd_nodes: Vec<usize> = (0..24).collect();
@@ -687,5 +646,63 @@ mod tests {
         assert_eq!(tour[0], tour[100]);
         let visited: HashSet<usize> = tour[..100].iter().copied().collect();
         assert_eq!(visited.len(), 100);
+    }
+
+    #[test]
+    fn test_blossom_matches_brute_force() {
+        // Blossom must reproduce the exact minimum-weight perfect matching, up to
+        // the i32 scaling error.
+        let (grph, _) = make_l2_graph(10, 5);
+        let odd_nodes: Vec<usize> = (0..10).collect();
+        let k = odd_nodes.len();
+
+        let mut dist = vec![vec![f64::INFINITY; k]; k];
+        for i in 0..k {
+            dist[i][i] = 0.0;
+            for j in (i + 1)..k {
+                let d = euclidean_distance(&grph, odd_nodes[i], odd_nodes[j]);
+                dist[i][j] = d;
+                dist[j][i] = d;
+            }
+        }
+
+        let blossom = blossom_matching(&dist, &odd_nodes, k);
+        let cost = |m: &[(usize, usize)]| -> f64 {
+            m.iter()
+                .map(|&(i, j)| euclidean_distance(&grph, i, j))
+                .sum()
+        };
+        let optimal = brute_force_min_matching(&dist, k);
+
+        assert_eq!(blossom.len(), k / 2);
+        assert!(
+            cost(&blossom) <= optimal + 1e-2,
+            "blossom {} vs optimal {}",
+            cost(&blossom),
+            optimal
+        );
+    }
+
+    /// Exhaustive minimum-weight perfect matching (oracle for small `k`).
+    fn brute_force_min_matching(dist: &[Vec<f64>], k: usize) -> f64 {
+        fn rec(dist: &[Vec<f64>], mask: usize) -> f64 {
+            if mask == 0 {
+                return 0.0;
+            }
+            let i = mask.trailing_zeros() as usize;
+            let rest = mask ^ (1 << i);
+            let mut best = f64::INFINITY;
+            let mut m = rest;
+            while m != 0 {
+                let j = m.trailing_zeros() as usize;
+                let cand = dist[i][j] + rec(dist, rest ^ (1 << j));
+                if cand < best {
+                    best = cand;
+                }
+                m &= m - 1;
+            }
+            best
+        }
+        rec(dist, (1 << k) - 1)
     }
 }
