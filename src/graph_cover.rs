@@ -334,6 +334,60 @@ where
     pd_cover(violate_fn, weight, &mut soln)
 }
 
+/// Reconstruct the odd cycle closed by a same-colour edge.
+///
+/// Index-based counterpart of [`construct_cycle`], used by
+/// [`min_odd_cycle_cover`]. Working on `NodeIndex` arrays avoids the O(V)
+/// node-name lookup that `construct_cycle`'s `HashMap<String, _>` arguments
+/// would otherwise require per node.
+fn extract_odd_cycle(
+    grph: &petgraph::Graph<String, (), petgraph::Undirected>,
+    parent: &[Option<petgraph::graph::NodeIndex>],
+    depth: &[usize],
+    start: petgraph::graph::NodeIndex,
+    end: petgraph::graph::NodeIndex,
+) -> Vec<String> {
+    let (node_a, node_b) = if depth[start.index()] < depth[end.index()] {
+        (start, end)
+    } else {
+        (end, start)
+    };
+
+    let mut left: VecDeque<petgraph::graph::NodeIndex> = VecDeque::new();
+    let mut right: VecDeque<petgraph::graph::NodeIndex> = VecDeque::new();
+
+    let mut da = depth[node_a.index()];
+    let mut a = node_a;
+    while da > depth[node_b.index()] {
+        left.push_back(a);
+        if let Some(p) = parent[a.index()] {
+            a = p;
+            da = depth[a.index()];
+        } else {
+            break;
+        }
+    }
+
+    let mut b = node_b;
+    while a != b {
+        left.push_back(a);
+        right.push_front(b);
+        if let Some(p) = parent[a.index()] {
+            a = p;
+        } else {
+            break;
+        }
+        if let Some(p) = parent[b.index()] {
+            b = p;
+        } else {
+            break;
+        }
+    }
+    left.push_back(a);
+    left.extend(right);
+    left.into_iter().map(|idx| grph[idx].clone()).collect()
+}
+
 /// Minimum weighted set of vertices covering all odd cycles.
 ///
 /// An odd cycle cover is a set $C \subseteq V$ such that $G[V \setminus C]$
@@ -349,46 +403,40 @@ where
     W: Copy + Add<Output = W> + Sub<Output = W> + PartialOrd + Default,
 {
     let current_coverset = coverset.clone();
+    let num_nodes = grph.node_count();
     let violate_fn = |soln: &HashSet<String>| -> Vec<Vec<String>> {
-        // BFS with coloring to find odd cycles
-        let mut color: HashMap<String, Option<bool>> = HashMap::new();
-        for node_idx in grph.node_indices() {
-            let source = &grph[node_idx];
-            if soln.contains(source) || color.contains_key(source) {
+        // BFS with coloring to find odd cycles. Colors and parents are indexed
+        // by node index (0/1 are the two colors, -1 marks an uncolored node).
+        let mut color: Vec<i8> = vec![-1; num_nodes];
+        let mut parent: Vec<Option<petgraph::graph::NodeIndex>> = vec![None; num_nodes];
+        let mut depth: Vec<usize> = vec![0; num_nodes];
+
+        for start in grph.node_indices() {
+            if soln.contains(&grph[start]) || color[start.index()] >= 0 {
                 continue;
             }
 
-            let mut parent: HashMap<String, Option<String>> = HashMap::new();
-            let mut depth: HashMap<String, usize> = HashMap::new();
-            let mut queue: VecDeque<String> = VecDeque::new();
+            color[start.index()] = 0;
+            depth[start.index()] = 0;
+            parent[start.index()] = None;
 
-            color.insert(source.clone(), Some(true));
-            depth.insert(source.clone(), 0);
-            parent.insert(source.clone(), None);
-            queue.push_back(source.clone());
+            let mut queue: VecDeque<petgraph::graph::NodeIndex> = VecDeque::new();
+            queue.push_back(start);
 
             while let Some(current) = queue.pop_front() {
-                let current_color = *color.get(&current).unwrap_or(&Some(false));
-                let current_idx = grph
-                    .node_indices()
-                    .find(|i| grph[*i] == current)
-                    .expect("node not found");
-
-                for neighbor_idx in grph.neighbors(current_idx) {
-                    let neighbor = &grph[neighbor_idx];
-                    if soln.contains(neighbor) {
+                let current_color = color[current.index()];
+                for neighbor in grph.neighbors(current) {
+                    if soln.contains(&grph[neighbor]) {
                         continue;
                     }
-                    if !color.contains_key(neighbor) {
-                        color.insert(neighbor.clone(), current_color.map(|c| !c));
-                        depth.insert(neighbor.clone(), depth[&current] + 1);
-                        parent.insert(neighbor.clone(), Some(current.clone()));
-                        queue.push_back(neighbor.clone());
-                    } else if color[&current] == color[neighbor] {
+                    if color[neighbor.index()] < 0 {
+                        color[neighbor.index()] = 1 - current_color;
+                        depth[neighbor.index()] = depth[current.index()] + 1;
+                        parent[neighbor.index()] = Some(current);
+                        queue.push_back(neighbor);
+                    } else if color[neighbor.index()] == current_color {
                         // Same color → odd cycle!
-                        // Find the cycle
-                        let cycle = construct_cycle(&parent, &depth, &current, neighbor);
-                        return vec![cycle];
+                        return vec![extract_odd_cycle(grph, &parent, &depth, current, neighbor)];
                     }
                 }
             }

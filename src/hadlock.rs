@@ -1,44 +1,63 @@
-use petgraph::graph::NodeIndex;
-use petgraph::Graph;
-use std::collections::HashMap;
-use std::collections::HashSet;
-use std::collections::VecDeque;
+//! Hadlock's algorithm for MAX-CUT on planar graphs.
+//!
+//! Given a planar graph $G = (V, E)$ with edge weights $w: E \to \mathbb{R}^+$,
+//! find a partition $(S, V \setminus S)$ maximizing the total weight of cut edges
+//!
+//! $$ \max_{S \subseteq V} \sum_{\substack{(u,v) \in E \\ u \in S,\, v \notin S}} w(u,v) $$
+//!
+//! Hadlock's reduction: a set of primal edges is a cut iff the corresponding
+//! dual edges form a $T$-join of the planar dual, where $T$ is the set of
+//! *odd faces* (faces with an odd number of boundary edges). The minimum weight
+//! $T$-join is computed as a minimum weight perfect matching on the complete
+//! graph over $T$ whose weights are shortest-path distances in the dual.
+//!
+//! The graph is first decomposed into biconnected components (blocks): MAX-CUT
+//! is additive over blocks, each block has a connected dual, and within a block
+//! the odd-degree dual vertices coincide with the odd-length faces.
+
+use crate::planar::planar_faces;
+use mwmatching::{Matching, SENTINEL};
+use petgraph::graph::{Graph, NodeIndex};
+use petgraph::visit::EdgeRef;
+use petgraph::Undirected;
+use std::cmp::Ordering;
+use std::collections::{BinaryHeap, HashMap, HashSet, VecDeque};
+
+type NetGraph = Graph<String, f64, Undirected>;
 
 /// Solve MAX-CUT for a planar graph using Hadlock's algorithm.
 ///
-/// Given a graph $G = (V, E)$ with edge weights $w: E \to \mathbb{R}^+$,
-/// find a partition $(S, V \setminus S)$ maximizing the total weight of cut edges:
+/// Returns the set of edge keys `"u--v"` (with the endpoint names sorted) that
+/// belong to the maximum cut.
 ///
-/// $$ \max_{S \subseteq V} \sum_{\substack{(u,v) \in E \\ u \in S, v \notin S}} w(u,v) $$
+/// # Panics
 ///
-/// The graph is first decomposed into biconnected components, each of which
-/// is solved independently. The final cut is the union of per-component cuts.
-///
-/// Edge weights are provided via a `weight` map keyed by edge keys "u--v" (sorted).
-/// Returns a set of edge keys (sorted tuples) that form the maximum cut.
-pub fn solve_hadlock_max_cut(grph: &Graph<String, f64, petgraph::Undirected>) -> HashSet<String> {
-    let components = biconnected_components(grph);
-    if components.is_empty() {
-        return HashSet::new();
-    }
-
-    let mut cut_edges: HashSet<String> = HashSet::new();
-    for comp in &components {
-        let comp_cut = solve_hadlock_component(comp);
-        cut_edges.extend(comp_cut);
-    }
-
-    cut_edges
+/// Panics if `grph` is not planar. Use [`try_solve_hadlock_max_cut`] for a
+/// fallible variant.
+pub fn solve_hadlock_max_cut(grph: &NetGraph) -> HashSet<String> {
+    try_solve_hadlock_max_cut(grph).expect("Hadlock MAX-CUT requires a planar graph")
 }
 
-/// Solve MAX-CUT for a single planar biconnected component.
-fn solve_hadlock_component(grph: &Graph<String, f64, petgraph::Undirected>) -> HashSet<String> {
-    let faces = find_faces(grph);
+/// Fallible variant of [`solve_hadlock_max_cut`]; returns `None` when `grph`
+/// is not planar.
+pub fn try_solve_hadlock_max_cut(grph: &NetGraph) -> Option<HashSet<String>> {
+    if grph.node_count() == 0 {
+        return Some(HashSet::new());
+    }
+    let mut cut_edges: HashSet<String> = HashSet::new();
+    for block in biconnected_components(grph) {
+        let comp = subgraph(grph, &block);
+        cut_edges.extend(solve_hadlock_component(&comp)?);
+    }
+    Some(cut_edges)
+}
+
+fn solve_hadlock_component(grph: &NetGraph) -> Option<HashSet<String>> {
+    let faces = planar_faces(grph)?;
     if faces.is_empty() {
-        return HashSet::new();
+        return Some(HashSet::new());
     }
 
-    // Find odd faces (faces with odd number of edges)
     let odd_faces: Vec<usize> = faces
         .iter()
         .enumerate()
@@ -47,523 +66,397 @@ fn solve_hadlock_component(grph: &Graph<String, f64, petgraph::Undirected>) -> H
         .collect();
 
     if odd_faces.len() < 2 {
-        // Already bipartite - every edge can be in the cut
-        return all_edges(grph);
+        return Some(all_edges(grph));
     }
 
-    // Build dual graph
-    // dual_edges maps face_i -> neighbor -> (weight, primal_edge_key)
-    let dual_edges = build_dual(grph, &faces);
-    let n_odd = odd_faces.len();
+    let weights = weight_map(grph);
+    let dual = build_dual(&faces, &weights);
 
-    // Compute shortest paths between all odd faces in the dual
-    let mut dist = vec![vec![f64::INFINITY; n_odd]; n_odd];
-    let _next = vec![vec![n_odd; n_odd]; n_odd];
+    let k = odd_faces.len();
+    let mut dist = vec![vec![f64::INFINITY; k]; k];
+    let mut predecessors: Vec<Vec<usize>> = Vec::with_capacity(k);
+    let mut predecessor_edges: Vec<Vec<(NodeIndex, NodeIndex)>> = Vec::with_capacity(k);
 
-    for i in 0..n_odd {
-        dist[i][i] = 0.0;
-        let src = odd_faces[i];
-        // Dijkstra from src in dual graph
-        let mut pq: Vec<(f64, usize)> = Vec::new();
-        let mut min_dist: HashMap<usize, f64> = HashMap::new();
-        let mut prev: HashMap<usize, Option<usize>> = HashMap::new();
-
-        min_dist.insert(src, 0.0);
-        pq.push((0.0, src));
-
-        while let Some((d, u)) = pop_smallest(&mut pq) {
-            if (d - min_dist[&u]).abs() > 1e-12 {
-                continue;
-            }
-            if let Some(neighbors) = dual_edges.get(&u) {
-                for (v, w, _ek) in neighbors {
-                    let nd = d + w;
-                    if nd < *min_dist.get(v).unwrap_or(&f64::INFINITY) {
-                        min_dist.insert(*v, nd);
-                        prev.insert(*v, Some(u));
-                        pq.push((nd, *v));
-                    }
-                }
-            }
+    for (i, &src) in odd_faces.iter().enumerate() {
+        let (d, prev, prev_edge) = dijkstra(&dual, src);
+        for (j, &dst) in odd_faces.iter().enumerate() {
+            dist[i][j] = d[dst];
         }
-
-        for j in 0..n_odd {
-            let dst = odd_faces[j];
-            if let Some(&d) = min_dist.get(&dst) {
-                dist[i][j] = d;
-                // Reconstruct path
-                let mut cur = dst;
-                let mut path = VecDeque::new();
-                while let Some(Some(p)) = prev.get(&cur) {
-                    path.push_front(cur);
-                    cur = *p;
-                }
-                path.push_front(src);
-                // Store path as a string for reconstruction
-                let _path_key: String = path.iter().map(|x| x.to_string() + ",").collect();
-                // We'll reconstruct edges later using the dual_edges map
-                // For now, store the path length and mark the adjacency
-                if i < j {
-                    // We'll reconstruct the primal edges during matching
-                }
-            }
-        }
+        predecessors.push(prev);
+        predecessor_edges.push(prev_edge);
     }
 
-    // Minimum weight perfect matching on odd faces via DP over subsets
-    let matching = min_weight_perfect_matching(&dist, n_odd);
+    let matching = min_weight_perfect_matching(&dist, k);
 
-    // Excluded edges = primal edges on shortest paths between matched faces
     let mut excluded: HashSet<String> = HashSet::new();
     for &(i, j) in &matching {
         let src = odd_faces[i];
         let dst = odd_faces[j];
-        // Reconstruct the shortest path in the dual
-        let path = reconstruct_shortest_path(grph, &dual_edges, src, dst);
-        for edge_key in &path {
-            excluded.insert(edge_key.clone());
+        let mut cur = dst;
+        while cur != src && predecessors[i][cur] != usize::MAX {
+            let (a, b) = predecessor_edges[i][cur];
+            excluded.insert(edge_key(&grph[a], &grph[b]));
+            cur = predecessors[i][cur];
         }
     }
 
-    // Max-cut = all edges \setminus excluded
     let mut result = all_edges(grph);
     for e in &excluded {
         result.remove(e);
     }
-    result
+    Some(result)
 }
 
-/// Extract all edge keys from a graph.
-fn all_edges(grph: &Graph<String, f64, petgraph::Undirected>) -> HashSet<String> {
-    let mut edges = HashSet::new();
-    for edge_idx in grph.edge_indices() {
-        let (u, v) = grph.edge_endpoints(edge_idx).unwrap();
-        let key = edge_key(&grph[u], &grph[v]);
-        edges.insert(key);
-    }
-    edges
+fn all_edges(grph: &NetGraph) -> HashSet<String> {
+    grph.edge_references()
+        .map(|e| edge_key(&grph[e.source()], &grph[e.target()]))
+        .collect()
 }
 
-/// Create a sorted edge key "u--v".
 fn edge_key(u: &str, v: &str) -> String {
-    if u < v {
+    if u <= v {
         format!("{}--{}", u, v)
     } else {
         format!("{}--{}", v, u)
     }
 }
 
-/// Pop smallest element from a priority queue (vec-based binary heap substitute).
-fn pop_smallest<T: PartialOrd>(vec: &mut Vec<(T, usize)>) -> Option<(T, usize)> {
-    let idx = vec
-        .iter()
-        .enumerate()
-        .min_by(|a, b| {
-            a.1 .0
-                .partial_cmp(&b.1 .0)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        })?
-        .0;
-    Some(vec.swap_remove(idx))
+fn normalize_edge_key(key: &str) -> String {
+    match key.split_once("--") {
+        Some((u, v)) => edge_key(u, v),
+        None => key.to_string(),
+    }
 }
 
-/// Find faces from a planar graph using a combinatorial embedding.
-///
-/// NOTE: This assumes the graph is planar and the provided adjacency ordering
-/// gives a valid planar embedding. For arbitrary planar graphs, a proper
-/// planar embedding algorithm (Booth-Lueker) is needed.
-fn find_faces(grph: &Graph<String, f64, petgraph::Undirected>) -> Vec<Vec<String>> {
-    // Build adjacency lists with a cyclic ordering (sorted for determinism)
-    let mut adj: HashMap<String, Vec<String>> = HashMap::new();
-    for node_idx in grph.node_indices() {
-        let node = &grph[node_idx];
-        let mut neighbors: Vec<String> =
-            grph.neighbors(node_idx).map(|n| grph[n].clone()).collect();
-        neighbors.sort();
-        adj.insert(node.clone(), neighbors);
+fn weight_map(grph: &NetGraph) -> HashMap<(NodeIndex, NodeIndex), f64> {
+    let mut map: HashMap<(NodeIndex, NodeIndex), f64> = HashMap::new();
+    for e in grph.edge_references() {
+        let a = e.source();
+        let b = e.target();
+        let key = if a <= b { (a, b) } else { (b, a) };
+        let w = *e.weight();
+        map.entry(key)
+            .and_modify(|existing| *existing = existing.min(w))
+            .or_insert(w);
     }
-
-    // Track visited directed edges as "from_node>to_node"
-    let mut visited_dir: HashSet<String> = HashSet::new();
-    let mut faces: Vec<Vec<String>> = Vec::new();
-
-    for node_idx in grph.node_indices() {
-        let start = &grph[node_idx];
-        if let Some(neighbors) = adj.get(start) {
-            for next in neighbors {
-                let dir_key = format!("{}>{}", start, next);
-                if visited_dir.contains(&dir_key) {
-                    continue;
-                }
-
-                let mut face: Vec<String> = Vec::new();
-                let mut curr = start.clone();
-                let mut prev = next.clone();
-                let first_dir = dir_key.clone();
-
-                loop {
-                    let dk = format!("{}>{}", &curr, &prev);
-                    visited_dir.insert(dk);
-
-                    face.push(curr.clone());
-
-                    let curr_adj = adj.get(&curr).cloned().unwrap_or_default();
-                    let prev_idx = curr_adj.iter().position(|x| x == &prev).unwrap_or(0);
-                    let next_idx = (prev_idx + 1) % curr_adj.len();
-                    let next_node = curr_adj[next_idx].clone();
-
-                    let new_dir = format!("{}>{}", &next_node, &curr);
-                    if new_dir == first_dir {
-                        face.push(next_node.clone());
-                        break;
-                    }
-
-                    prev = curr;
-                    curr = next_node;
-
-                    if face.len() > grph.node_count() * 3 {
-                        break;
-                    }
-                }
-
-                if face.len() >= 3 {
-                    faces.push(face);
-                }
-            }
-        }
-    }
-
-    // Deduplicate faces via sorted canonical form
-    let mut seen: HashSet<Vec<String>> = HashSet::new();
-    let mut unique_faces: Vec<Vec<String>> = Vec::new();
-    for face in faces {
-        let mut canon: Vec<String> = face.clone();
-        canon.sort();
-        if seen.insert(canon) {
-            unique_faces.push(face);
-        }
-    }
-
-    unique_faces
+    map
 }
 
-/// Build dual graph: maps face_id -> Vec<(neighbor_face_id, weight, primal_edge_key)>
+struct DualEdge {
+    to: usize,
+    w: f64,
+    primal: (NodeIndex, NodeIndex),
+}
+
 fn build_dual(
-    grph: &Graph<String, f64, petgraph::Undirected>,
-    faces: &[Vec<String>],
-) -> HashMap<usize, Vec<(usize, f64, String)>> {
-    // Map each primal edge to the faces that share it
-    let mut edge_to_faces: HashMap<String, Vec<usize>> = HashMap::new();
-
-    for (i, face) in faces.iter().enumerate() {
-        for j in 0..face.len() {
-            let u = &face[j];
-            let v = &face[(j + 1) % face.len()];
-            let ek = edge_key(u, v);
-            edge_to_faces.entry(ek).or_default().push(i);
+    faces: &[Vec<NodeIndex>],
+    weights: &HashMap<(NodeIndex, NodeIndex), f64>,
+) -> Vec<Vec<DualEdge>> {
+    let mut edge_faces: HashMap<(NodeIndex, NodeIndex), Vec<usize>> = HashMap::new();
+    for (fi, face) in faces.iter().enumerate() {
+        let m = face.len();
+        for i in 0..m {
+            let u = face[i];
+            let v = face[(i + 1) % m];
+            if u == v {
+                continue;
+            }
+            let key = if u <= v { (u, v) } else { (v, u) };
+            edge_faces.entry(key).or_default().push(fi);
         }
     }
 
-    let mut dual: HashMap<usize, Vec<(usize, f64, String)>> = HashMap::new();
-
-    for (ek, face_ids) in &edge_to_faces {
+    let mut dual: Vec<Vec<DualEdge>> = (0..faces.len()).map(|_| Vec::new()).collect();
+    for (key, face_ids) in &edge_faces {
         if face_ids.len() < 2 {
-            continue; // bridge / boundary edge
+            continue;
         }
-        // Get edge weight
-        let w = get_edge_weight(grph, ek);
-
+        let w = *weights.get(key).unwrap_or(&1.0);
         for a in 0..face_ids.len() {
             for b in (a + 1)..face_ids.len() {
                 let fi = face_ids[a];
                 let fj = face_ids[b];
-                // Keep minimum weight for parallel edges
-                let neighbors = dual.entry(fi).or_default();
-                let existing_idx = neighbors.iter().position(|(nf, _, _)| *nf == fj);
-                if let Some(idx) = existing_idx {
-                    if w < neighbors[idx].1 {
-                        neighbors[idx] = (fj, w, ek.clone());
-                    }
-                } else {
-                    neighbors.push((fj, w, ek.clone()));
+                if fi == fj {
+                    continue;
                 }
-
-                // Add reverse edge
-                let neighbors_rev = dual.entry(fj).or_default();
-                let existing_idx_rev = neighbors_rev.iter().position(|(nf, _, _)| *nf == fi);
-                if let Some(idx) = existing_idx_rev {
-                    if w < neighbors_rev[idx].1 {
-                        neighbors_rev[idx] = (fi, w, ek.clone());
-                    }
-                } else {
-                    neighbors_rev.push((fi, w, ek.clone()));
-                }
+                add_dual_edge(&mut dual, fi, fj, w, *key);
+                add_dual_edge(&mut dual, fj, fi, w, *key);
             }
         }
     }
-
     dual
 }
 
-/// Get weight of an edge by its key.
-fn get_edge_weight(grph: &Graph<String, f64, petgraph::Undirected>, key: &str) -> f64 {
-    let parts: Vec<&str> = key.split("--").collect();
-    if parts.len() != 2 {
-        return 1.0;
-    }
-    for edge_idx in grph.edge_indices() {
-        let (u, v) = grph.edge_endpoints(edge_idx).unwrap();
-        if (grph[u] == parts[0] && grph[v] == parts[1])
-            || (grph[u] == parts[1] && grph[v] == parts[0])
-        {
-            return grph[edge_idx];
+fn add_dual_edge(
+    dual: &mut [Vec<DualEdge>],
+    from: usize,
+    to: usize,
+    w: f64,
+    primal: (NodeIndex, NodeIndex),
+) {
+    if let Some(existing) = dual[from].iter_mut().find(|e| e.to == to) {
+        if w < existing.w {
+            existing.w = w;
+            existing.primal = primal;
         }
+    } else {
+        dual[from].push(DualEdge { to, w, primal });
     }
-    1.0
 }
 
-/// Reconstruct shortest path between two dual vertices as primal edge keys.
-fn reconstruct_shortest_path(
-    _grph: &Graph<String, f64, petgraph::Undirected>,
-    dual_edges: &HashMap<usize, Vec<(usize, f64, String)>>,
+#[derive(PartialEq)]
+struct HeapItem(f64, usize);
+
+impl Eq for HeapItem {}
+
+impl PartialOrd for HeapItem {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for HeapItem {
+    fn cmp(&self, other: &Self) -> Ordering {
+        other.0.partial_cmp(&self.0).unwrap_or(Ordering::Equal)
+    }
+}
+
+fn dijkstra(
+    dual: &[Vec<DualEdge>],
     src: usize,
-    dst: usize,
-) -> Vec<String> {
-    // Dijkstra with path reconstruction
-    let mut pq: Vec<(f64, usize)> = vec![(0.0, src)];
-    let mut dist: HashMap<usize, f64> = HashMap::new();
-    let mut prev: HashMap<usize, (usize, String)> = HashMap::new();
-
-    dist.insert(src, 0.0);
-
-    while let Some((d, u)) = pop_smallest(&mut pq) {
-        if u == dst {
-            break;
-        }
-        if (d - dist[&u]).abs() > 1e-12 {
+) -> (Vec<f64>, Vec<usize>, Vec<(NodeIndex, NodeIndex)>) {
+    let n = dual.len();
+    let mut dist = vec![f64::INFINITY; n];
+    let mut prev = vec![usize::MAX; n];
+    let mut prev_edge = vec![(NodeIndex::new(0), NodeIndex::new(0)); n];
+    dist[src] = 0.0;
+    let mut heap = BinaryHeap::new();
+    heap.push(HeapItem(0.0, src));
+    while let Some(HeapItem(d, u)) = heap.pop() {
+        if d > dist[u] {
             continue;
         }
-        if let Some(neighbors) = dual_edges.get(&u) {
-            for (v, w, ek) in neighbors {
-                let nd = d + w;
-                if nd < *dist.get(v).unwrap_or(&f64::INFINITY) {
-                    dist.insert(*v, nd);
-                    prev.insert(*v, (u, ek.clone()));
-                    pq.push((nd, *v));
-                }
+        for e in &dual[u] {
+            let nd = d + e.w;
+            if nd < dist[e.to] {
+                dist[e.to] = nd;
+                prev[e.to] = u;
+                prev_edge[e.to] = e.primal;
+                heap.push(HeapItem(nd, e.to));
             }
         }
     }
-
-    // Reconstruct path of primal edges
-    let mut path = Vec::new();
-    let mut cur = dst;
-    while let Some((p, ek)) = prev.get(&cur) {
-        path.push(ek.clone());
-        cur = *p;
-        if cur == src {
-            break;
-        }
-    }
-    path.reverse();
-    path
+    (dist, prev, prev_edge)
 }
 
-/// Minimum weight perfect matching on a complete graph via DP over subsets.
+/// Minimum weight perfect matching on a complete graph given by `dist`.
 ///
-/// Uses the DP recurrence:
-///
-/// $$ dp\[S\] = \min_{i,j \notin S} \bigl( dp\[S \cup \{i,j\}\] + dist\[i\]\[j\] \bigr) $$
-///
-/// where $S$ is a subset of vertices and $dp\[S\]$ is the minimum cost to match
-/// the remaining vertices not in $S$.
-///
-/// `dist[i][j]` is the distance between vertices i and j.
-/// n is the number of vertices (must be even).
-/// Returns a vector of matched pairs (i, j) with i < j.
-fn min_weight_perfect_matching(dist: &[Vec<f64>], n: usize) -> Vec<(usize, usize)> {
-    if n < 2 || n % 2 != 0 {
+/// Uses Edmonds' blossom algorithm ($O(k^3)$) via the `mwmatching` crate. The
+/// solver takes `i32` weights, so costs are shifted to `C - cost` (which turns
+/// minimisation into maximisation while maximum cardinality forces a perfect
+/// matching). Integral distances are used exactly; non-integral distances are
+/// scaled into `[0, 1e6]`.
+fn min_weight_perfect_matching(dist: &[Vec<f64>], k: usize) -> Vec<(usize, usize)> {
+    if k < 2 || k % 2 != 0 {
         return Vec::new();
     }
 
-    let size = 1 << n;
-    let mut dp = vec![f64::INFINITY; size];
-    // prev[mask] stores (prev_mask, i, j) for reconstruction
-    let mut prev_i = vec![n; size];
-    let mut prev_j = vec![n; size];
-
-    dp[0] = 0.0;
-
-    for mask in 0..size {
-        if dp[mask] == f64::INFINITY {
-            continue;
-        }
-        // Find first unset bit
-        let mut i = 0;
-        while i < n && (mask & (1 << i)) != 0 {
-            i += 1;
-        }
-        if i >= n {
-            continue;
-        }
-        // Try pairing i with every unset j > i
-        for (j, _) in dist.iter().enumerate().take(n).skip(i + 1) {
-            if (mask & (1 << j)) == 0 {
-                let new_mask = mask | (1 << i) | (1 << j);
-                let new_cost = dp[mask] + dist[i][j];
-                if new_cost < dp[new_mask] {
-                    dp[new_mask] = new_cost;
-                    prev_i[new_mask] = i;
-                    prev_j[new_mask] = j;
-                }
+    let mut max_d = 0.0f64;
+    for (i, row) in dist.iter().enumerate() {
+        for &d in row.iter().skip(i + 1) {
+            if d.is_finite() && d > max_d {
+                max_d = d;
             }
         }
     }
-
-    // Reconstruct matching
-    let mut matching = Vec::new();
-    let mut mask = size - 1;
-    while mask != 0 {
-        let i = prev_i[mask];
-        let j = prev_j[mask];
-        if i < n && j < n {
-            matching.push((i, j));
-            mask &= !(1 << i);
-            mask &= !(1 << j);
-        } else {
-            break;
-        }
+    if max_d <= 0.0 {
+        return (0..k).step_by(2).map(|i| (i, i + 1)).collect();
     }
 
+    let integral = max_d <= 1.0e8
+        && dist.iter().all(|row| {
+            row.iter()
+                .all(|&d| !d.is_finite() || (d - d.round()).abs() < 1e-9)
+        });
+    let (scale, c_const) = if integral {
+        (1.0f64, max_d.round() as i64 + 1)
+    } else {
+        let s = 1.0e6 / max_d;
+        (s, (max_d * s).round() as i64 + 1)
+    };
+
+    let mut edges: Vec<(usize, usize, i32)> = Vec::with_capacity(k * (k - 1) / 2);
+    for (i, row) in dist.iter().enumerate() {
+        for (j, &d) in row.iter().enumerate().skip(i + 1) {
+            if !d.is_finite() {
+                continue;
+            }
+            let cost = (d * scale).round() as i64;
+            let weight = (c_const - cost).clamp(0, i32::MAX as i64) as i32;
+            edges.push((i, j, weight));
+        }
+    }
+    if edges.is_empty() {
+        return Vec::new();
+    }
+
+    let mates = Matching::new(edges).max_cardinality().solve();
+    let mut matching = Vec::with_capacity(k / 2);
+    for (i, &mate) in mates.iter().enumerate() {
+        if i < mate && mate != SENTINEL {
+            matching.push((i, mate));
+        }
+    }
     matching
 }
 
-/// Find biconnected components via DFS articulation point detection.
-fn biconnected_components(
-    grph: &Graph<String, f64, petgraph::Undirected>,
-) -> Vec<Graph<String, f64, petgraph::Undirected>> {
-    let n = grph.node_count();
-    if n == 0 {
-        return Vec::new();
+struct Bcc<'a> {
+    grph: &'a NetGraph,
+    disc: Vec<usize>,
+    low: Vec<usize>,
+    stack: Vec<(NodeIndex, NodeIndex)>,
+    blocks: Vec<Vec<(NodeIndex, NodeIndex)>>,
+    timer: usize,
+}
+
+impl Bcc<'_> {
+    fn dfs(&mut self, u: NodeIndex, parent: usize) {
+        self.timer += 1;
+        self.disc[u.index()] = self.timer;
+        self.low[u.index()] = self.timer;
+        let neighbors: Vec<NodeIndex> = self.grph.neighbors(u).collect();
+        for v in neighbors {
+            if v.index() == parent {
+                continue;
+            }
+            if self.disc[v.index()] == usize::MAX {
+                self.stack.push((u, v));
+                self.dfs(v, u.index());
+                self.low[u.index()] = self.low[u.index()].min(self.low[v.index()]);
+                if self.low[v.index()] >= self.disc[u.index()] {
+                    let mut block = Vec::new();
+                    while let Some(top) = self.stack.pop() {
+                        block.push(top);
+                        if top == (u, v) {
+                            break;
+                        }
+                    }
+                    if !block.is_empty() {
+                        self.blocks.push(block);
+                    }
+                }
+            } else if self.disc[v.index()] < self.disc[u.index()] {
+                self.stack.push((u, v));
+                self.low[u.index()] = self.low[u.index()].min(self.disc[v.index()]);
+            }
+        }
     }
+}
 
-    let mut visited = HashSet::new();
-    let mut components: Vec<Graph<String, f64, petgraph::Undirected>> = Vec::new();
-
-    for start_idx in grph.node_indices() {
-        let start = &grph[start_idx];
-        if visited.contains(start) {
+/// Biconnected components (blocks) as edge lists.
+fn biconnected_components(grph: &NetGraph) -> Vec<Vec<(NodeIndex, NodeIndex)>> {
+    let n = grph.node_count();
+    let mut state = Bcc {
+        grph,
+        disc: vec![usize::MAX; n],
+        low: vec![0; n],
+        stack: Vec::new(),
+        blocks: Vec::new(),
+        timer: 0,
+    };
+    for root in grph.node_indices() {
+        if state.disc[root.index()] != usize::MAX {
             continue;
         }
-
-        // Collect all nodes reachable from start (connected component)
-        let mut bfs_queue = VecDeque::new();
-        let mut comp_nodes = HashSet::new();
-        bfs_queue.push_back(start_idx);
-        comp_nodes.insert(start.clone());
-        visited.insert(start.clone());
-
-        while let Some(idx) = bfs_queue.pop_front() {
-            for neighbor in grph.neighbors(idx) {
-                let nname = &grph[neighbor];
-                if comp_nodes.insert(nname.clone()) {
-                    visited.insert(nname.clone());
-                    bfs_queue.push_back(neighbor);
-                }
-            }
+        state.dfs(root, usize::MAX);
+        if !state.stack.is_empty() {
+            let block: Vec<(NodeIndex, NodeIndex)> = state.stack.drain(..).collect();
+            state.blocks.push(block);
         }
-
-        // Build component subgraph
-        let mut comp = Graph::<String, f64, petgraph::Undirected>::new_undirected();
-        let mut node_map: HashMap<String, NodeIndex> = HashMap::new();
-        for node_name in &comp_nodes {
-            let idx = comp.add_node(node_name.clone());
-            node_map.insert(node_name.clone(), idx);
-        }
-        for edge_idx in grph.edge_indices() {
-            let (u, v) = grph.edge_endpoints(edge_idx).unwrap();
-            let uname = &grph[u];
-            let vname = &grph[v];
-            if comp_nodes.contains(uname) && comp_nodes.contains(vname) {
-                let w = grph[edge_idx];
-                if !comp.contains_edge(node_map[uname], node_map[vname]) {
-                    comp.add_edge(node_map[uname], node_map[vname], w);
-                }
-            }
-        }
-        components.push(comp);
     }
+    state.blocks
+}
 
-    components
+fn subgraph(grph: &NetGraph, edges: &[(NodeIndex, NodeIndex)]) -> NetGraph {
+    let mut sub: NetGraph = Graph::new_undirected();
+    let mut map: HashMap<NodeIndex, NodeIndex> = HashMap::new();
+    for &(u, v) in edges {
+        let su = *map
+            .entry(u)
+            .or_insert_with(|| sub.add_node(grph[u].clone()));
+        let sv = *map
+            .entry(v)
+            .or_insert_with(|| sub.add_node(grph[v].clone()));
+        let w = grph.find_edge(u, v).map(|e| grph[e]).unwrap_or(1.0);
+        sub.add_edge(su, sv, w);
+    }
+    sub
 }
 
 /// Validate that `cut_edges` forms a valid bipartite cut of `grph`.
-/// Returns (is_valid, total_cut_weight).
-pub fn validate_max_cut(
-    grph: &Graph<String, f64, petgraph::Undirected>,
-    cut_edges: &HashSet<String>,
-) -> (bool, f64) {
-    // Build cut subgraph
-    let mut cut_grph = Graph::<String, f64, petgraph::Undirected>::new_undirected();
-    let mut node_map: HashMap<String, NodeIndex> = HashMap::new();
+///
+/// Returns `(is_bipartite, total_cut_weight)`.
+pub fn validate_max_cut(grph: &NetGraph, cut_edges: &HashSet<String>) -> (bool, f64) {
+    let weights: HashMap<String, f64> = grph
+        .edge_references()
+        .map(|e| (edge_key(&grph[e.source()], &grph[e.target()]), *e.weight()))
+        .collect();
+    let normalized: HashSet<String> = cut_edges.iter().map(|k| normalize_edge_key(k)).collect();
 
-    for node_idx in grph.node_indices() {
-        let name = grph[node_idx].clone();
-        node_map
-            .entry(name.clone())
-            .or_insert_with(|| cut_grph.add_node(name));
-    }
-
-    for edge_idx in grph.edge_indices() {
-        let (u, v) = grph.edge_endpoints(edge_idx).unwrap();
-        let ek = edge_key(&grph[u], &grph[v]);
-        if cut_edges.contains(&ek) {
-            let uname = &grph[u];
-            let vname = &grph[v];
-            if !cut_grph.contains_edge(node_map[uname], node_map[vname]) {
-                cut_grph.add_edge(node_map[uname], node_map[vname], grph[edge_idx]);
-            }
-        }
-    }
-
-    // Check bipartiteness via BFS coloring
-    let mut color: HashMap<String, Option<bool>> = HashMap::new();
-    let mut is_bipartite = true;
-
-    for node_idx in cut_grph.node_indices() {
-        let node = cut_grph[node_idx].clone();
-        if color.contains_key(&node) {
+    let mut cut: NetGraph = Graph::new_undirected();
+    let mut map: HashMap<NodeIndex, NodeIndex> = HashMap::new();
+    for e in grph.edge_references() {
+        let key = edge_key(&grph[e.source()], &grph[e.target()]);
+        if !normalized.contains(&key) {
             continue;
         }
+        let (a, b) = (e.source(), e.target());
+        let ca = *map
+            .entry(a)
+            .or_insert_with(|| cut.add_node(grph[a].clone()));
+        let cb = *map
+            .entry(b)
+            .or_insert_with(|| cut.add_node(grph[b].clone()));
+        cut.add_edge(ca, cb, *e.weight());
+    }
+
+    let mut color: HashMap<NodeIndex, bool> = HashMap::new();
+    let mut is_bipartite = true;
+    'outer: for start in cut.node_indices() {
+        if color.contains_key(&start) {
+            continue;
+        }
+        color.insert(start, true);
         let mut queue = VecDeque::new();
-        color.insert(node.clone(), Some(true));
-        queue.push_back(node);
-        while let Some(current) = queue.pop_front() {
-            let current_idx = cut_grph
-                .node_indices()
-                .find(|i| cut_grph[*i] == current)
-                .unwrap();
-            for neighbor_idx in cut_grph.neighbors(current_idx) {
-                let neighbor = cut_grph[neighbor_idx].clone();
-                if !color.contains_key(&neighbor) {
-                    color.insert(neighbor.clone(), color[&current].map(|c| !c));
-                    queue.push_back(neighbor);
-                } else if color[&current] == color[&neighbor] {
-                    is_bipartite = false;
-                    break;
+        queue.push_back(start);
+        while let Some(u) = queue.pop_front() {
+            let cu = color[&u];
+            for v in cut.neighbors(u) {
+                match color.get(&v) {
+                    Some(&cv) => {
+                        if cv == cu {
+                            is_bipartite = false;
+                            break 'outer;
+                        }
+                    }
+                    None => {
+                        color.insert(v, !cu);
+                        queue.push_back(v);
+                    }
                 }
             }
-            if !is_bipartite {
-                break;
-            }
-        }
-        if !is_bipartite {
-            break;
         }
     }
 
-    // Compute total cut weight
-    let cut_weight: f64 = cut_edges.iter().map(|ek| get_edge_weight(grph, ek)).sum();
+    let cut_weight: f64 = cut_edges
+        .iter()
+        .map(|key| {
+            weights
+                .get(&normalize_edge_key(key))
+                .copied()
+                .unwrap_or(1.0)
+        })
+        .sum();
 
     (is_bipartite, cut_weight)
 }
@@ -572,64 +465,264 @@ pub fn validate_max_cut(
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_max_cut_triangle() {
-        let mut grph = Graph::<String, f64, petgraph::Undirected>::new_undirected();
-        let n0 = grph.add_node("n0".to_string());
-        let n1 = grph.add_node("n1".to_string());
-        let n2 = grph.add_node("n2".to_string());
-        grph.add_edge(n0, n1, 5.0);
-        grph.add_edge(n1, n2, 10.0);
-        grph.add_edge(n2, n0, 3.0);
-
-        let cut = solve_hadlock_max_cut(&grph);
-        let (_valid, weight) = validate_max_cut(&grph, &cut);
-        // Note: Hadlock requires a correct planar embedding.
-        // implementation uses sorted adjacency as a simplified embedding,
-        // which may not correctly find faces for all planar graphs.
-        // A full Booth-Lueker planar embedding algorithm would be needed
-        // for arbitrary planar graphs.
-        // For now, verify the cut is a subset of all edges and weight >= 0.
-        let all_edges_set = all_edges(&grph);
-        for ek in &cut {
-            assert!(all_edges_set.contains(ek), "Cut edge {} not in graph", ek);
+    fn graph_with(edges: &[(&str, &str, f64)]) -> NetGraph {
+        let mut grph: NetGraph = Graph::new_undirected();
+        let mut map: HashMap<String, NodeIndex> = HashMap::new();
+        for &(u, v, w) in edges {
+            let nu = *map
+                .entry(u.to_string())
+                .or_insert_with(|| grph.add_node(u.to_string()));
+            let nv = *map
+                .entry(v.to_string())
+                .or_insert_with(|| grph.add_node(v.to_string()));
+            grph.add_edge(nu, nv, w);
         }
-        assert!(weight >= 0.0);
+        grph
+    }
+
+    fn triangle() -> NetGraph {
+        graph_with(&[("a", "b", 5.0), ("b", "c", 10.0), ("c", "a", 3.0)])
     }
 
     #[test]
-    fn test_max_cut_square() {
-        let mut grph = Graph::<String, f64, petgraph::Undirected>::new_undirected();
-        let n0 = grph.add_node("n0".to_string());
-        let n1 = grph.add_node("n1".to_string());
-        let n2 = grph.add_node("n2".to_string());
-        let n3 = grph.add_node("n3".to_string());
-        grph.add_edge(n0, n1, 1.0);
-        grph.add_edge(n1, n2, 1.0);
-        grph.add_edge(n2, n3, 1.0);
-        grph.add_edge(n3, n0, 1.0);
-
+    fn triangle_excludes_min_weight_edge() {
+        let grph = triangle();
         let cut = solve_hadlock_max_cut(&grph);
         let (valid, weight) = validate_max_cut(&grph, &cut);
         assert!(valid);
-        // Square: all edges in cut = 4.0 (it's bipartite)
-        assert!((weight - 4.0).abs() < 1e-10);
+        assert!((weight - 15.0).abs() < 1e-9);
+        assert_eq!(cut.len(), 2);
     }
 
     #[test]
-    fn test_all_edges() {
-        let mut grph = Graph::<String, f64, petgraph::Undirected>::new_undirected();
-        let n0 = grph.add_node("n0".to_string());
-        let n1 = grph.add_node("n1".to_string());
-        grph.add_edge(n0, n1, 1.0);
-
-        let edges = all_edges(&grph);
-        assert_eq!(edges.len(), 1);
-        assert!(edges.contains("n0--n1"));
+    fn square_is_bipartite() {
+        let grph = graph_with(&[
+            ("a", "b", 1.0),
+            ("b", "c", 1.0),
+            ("c", "d", 1.0),
+            ("d", "a", 1.0),
+        ]);
+        let cut = solve_hadlock_max_cut(&grph);
+        let (valid, weight) = validate_max_cut(&grph, &cut);
+        assert!(valid);
+        assert_eq!(cut.len(), 4);
+        assert!((weight - 4.0).abs() < 1e-9);
     }
 
     #[test]
-    fn test_mwpm_simple() {
+    fn square_with_diagonal_excludes_the_diagonal() {
+        let grph = graph_with(&[
+            ("a", "b", 5.0),
+            ("b", "c", 10.0),
+            ("c", "d", 5.0),
+            ("d", "a", 10.0),
+            ("a", "c", 2.0),
+        ]);
+        let cut = solve_hadlock_max_cut(&grph);
+        let (valid, weight) = validate_max_cut(&grph, &cut);
+        assert!(valid);
+        assert!((weight - 30.0).abs() < 1e-9);
+        assert!(!cut.contains("a--c"));
+    }
+
+    #[test]
+    fn grid_is_bipartite() {
+        let mut grph: NetGraph = Graph::new_undirected();
+        let nodes: Vec<Vec<NodeIndex>> = (0..3)
+            .map(|r| {
+                (0..3)
+                    .map(|c| grph.add_node(format!("r{}c{}", r, c)))
+                    .collect()
+            })
+            .collect();
+        for r in 0..3 {
+            for c in 0..3 {
+                if c < 2 {
+                    grph.add_edge(nodes[r][c], nodes[r][c + 1], 1.0);
+                }
+                if r < 2 {
+                    grph.add_edge(nodes[r][c], nodes[r + 1][c], 1.0);
+                }
+            }
+        }
+        let cut = solve_hadlock_max_cut(&grph);
+        let (valid, weight) = validate_max_cut(&grph, &cut);
+        assert!(valid);
+        assert_eq!(cut.len(), grph.edge_count());
+        assert!((weight - 12.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn empty_graph_has_empty_cut() {
+        let grph: NetGraph = Graph::new_undirected();
+        assert!(solve_hadlock_max_cut(&grph).is_empty());
+    }
+
+    #[test]
+    fn single_edge_is_entirely_in_the_cut() {
+        let grph = graph_with(&[("a", "b", 7.0)]);
+        let cut = solve_hadlock_max_cut(&grph);
+        let (valid, weight) = validate_max_cut(&grph, &cut);
+        assert!(valid);
+        assert!((weight - 7.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn default_weight_one_triangle() {
+        let grph = graph_with(&[("a", "b", 1.0), ("b", "c", 1.0), ("c", "a", 1.0)]);
+        let cut = solve_hadlock_max_cut(&grph);
+        let (valid, weight) = validate_max_cut(&grph, &cut);
+        assert!(valid);
+        assert!((weight - 2.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn wheel_w4_max_cut_is_six() {
+        let grph = graph_with(&[
+            ("h", "r1", 1.0),
+            ("h", "r2", 1.0),
+            ("h", "r3", 1.0),
+            ("h", "r4", 1.0),
+            ("r1", "r2", 1.0),
+            ("r2", "r3", 1.0),
+            ("r3", "r4", 1.0),
+            ("r4", "r1", 1.0),
+        ]);
+        let cut = solve_hadlock_max_cut(&grph);
+        let (valid, weight) = validate_max_cut(&grph, &cut);
+        assert!(valid);
+        assert!((weight - 6.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn triangular_prism_max_cut_is_seven() {
+        let grph = graph_with(&[
+            ("0", "1", 1.0),
+            ("1", "2", 1.0),
+            ("2", "0", 1.0),
+            ("3", "4", 1.0),
+            ("4", "5", 1.0),
+            ("5", "3", 1.0),
+            ("0", "3", 1.0),
+            ("1", "4", 1.0),
+            ("2", "5", 1.0),
+        ]);
+        let cut = solve_hadlock_max_cut(&grph);
+        let (valid, weight) = validate_max_cut(&grph, &cut);
+        assert!(valid);
+        assert!((weight - 7.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn bridge_connected_triangles() {
+        let grph = graph_with(&[
+            ("a", "b", 2.0),
+            ("b", "c", 3.0),
+            ("c", "a", 4.0),
+            ("c", "d", 1.0),
+            ("d", "e", 5.0),
+            ("e", "f", 6.0),
+            ("f", "d", 7.0),
+        ]);
+        let cut = solve_hadlock_max_cut(&grph);
+        let (valid, weight) = validate_max_cut(&grph, &cut);
+        assert!(valid);
+        // bridge 1 + triangle cuts (9 - 2 = 7) + (18 - 5 = 13) = 21
+        assert!((weight - 21.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn two_disjoint_triangles() {
+        let grph = graph_with(&[
+            ("a", "b", 2.0),
+            ("b", "c", 3.0),
+            ("c", "a", 4.0),
+            ("d", "e", 5.0),
+            ("e", "f", 6.0),
+            ("f", "d", 7.0),
+        ]);
+        let cut = solve_hadlock_max_cut(&grph);
+        let (valid, weight) = validate_max_cut(&grph, &cut);
+        assert!(valid);
+        assert!((weight - 20.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn k5_is_rejected() {
+        let mut grph: NetGraph = Graph::new_undirected();
+        let nodes: Vec<NodeIndex> = (0..5).map(|i| grph.add_node(format!("n{}", i))).collect();
+        for i in 0..5 {
+            for j in (i + 1)..5 {
+                grph.add_edge(nodes[i], nodes[j], 1.0);
+            }
+        }
+        assert!(try_solve_hadlock_max_cut(&grph).is_none());
+    }
+
+    #[test]
+    fn k3_3_is_rejected() {
+        let mut grph: NetGraph = Graph::new_undirected();
+        let nodes: Vec<NodeIndex> = (0..6).map(|i| grph.add_node(format!("n{}", i))).collect();
+        for i in 0..3 {
+            for j in 3..6 {
+                grph.add_edge(nodes[i], nodes[j], 1.0);
+            }
+        }
+        assert!(try_solve_hadlock_max_cut(&grph).is_none());
+    }
+
+    #[test]
+    #[should_panic(expected = "planar")]
+    fn non_planar_panics() {
+        let mut grph: NetGraph = Graph::new_undirected();
+        let nodes: Vec<NodeIndex> = (0..5).map(|i| grph.add_node(format!("n{}", i))).collect();
+        for i in 0..5 {
+            for j in (i + 1)..5 {
+                grph.add_edge(nodes[i], nodes[j], 1.0);
+            }
+        }
+        solve_hadlock_max_cut(&grph);
+    }
+
+    #[test]
+    fn biconnected_components_of_triangle() {
+        let grph = graph_with(&[("a", "b", 1.0), ("b", "c", 1.0), ("c", "a", 1.0)]);
+        let blocks = biconnected_components(&grph);
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].len(), 3);
+    }
+
+    #[test]
+    fn biconnected_components_of_bowtie() {
+        let grph = graph_with(&[
+            ("a", "b", 1.0),
+            ("b", "c", 1.0),
+            ("c", "a", 1.0),
+            ("c", "d", 1.0),
+            ("d", "e", 1.0),
+            ("e", "c", 1.0),
+        ]);
+        let blocks = biconnected_components(&grph);
+        assert_eq!(blocks.len(), 2);
+        assert!(blocks.iter().all(|b| b.len() == 3));
+    }
+
+    #[test]
+    fn biconnected_components_of_bridge() {
+        let grph = graph_with(&[("a", "b", 1.0)]);
+        let blocks = biconnected_components(&grph);
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].len(), 1);
+    }
+
+    #[test]
+    fn biconnected_components_empty() {
+        let grph: NetGraph = Graph::new_undirected();
+        assert!(biconnected_components(&grph).is_empty());
+    }
+
+    #[test]
+    fn mwpm_pairs_everything_once() {
         let dist = vec![
             vec![0.0, 1.0, 2.0, 3.0],
             vec![1.0, 0.0, 4.0, 5.0],
@@ -640,84 +733,88 @@ mod tests {
         assert_eq!(matching.len(), 2);
         let mut used = [false; 4];
         for &(i, j) in &matching {
-            assert!(!used[i]);
-            assert!(!used[j]);
+            assert!(!used[i] && !used[j]);
             used[i] = true;
             used[j] = true;
         }
     }
 
     #[test]
-    fn test_edge_key() {
+    fn mwpm_rejects_odd_counts() {
+        let dist = vec![
+            vec![0.0, 1.0, 2.0],
+            vec![1.0, 0.0, 3.0],
+            vec![2.0, 3.0, 0.0],
+        ];
+        assert!(min_weight_perfect_matching(&dist, 3).is_empty());
+    }
+
+    #[test]
+    fn edge_key_is_sorted() {
         assert_eq!(edge_key("a", "b"), "a--b");
         assert_eq!(edge_key("b", "a"), "a--b");
         assert_eq!(edge_key("x", "x"), "x--x");
     }
 
     #[test]
-    fn test_all_edges_empty() {
-        let grph = Graph::<String, f64, petgraph::Undirected>::new_undirected();
-        let edges = all_edges(&grph);
-        assert!(edges.is_empty());
-    }
-
-    #[test]
-    fn test_biconnected_components_empty() {
-        let grph = Graph::<String, f64, petgraph::Undirected>::new_undirected();
-        let components = biconnected_components(&grph);
-        assert!(components.is_empty());
-    }
-
-    #[test]
-    fn test_biconnected_components_single_edge() {
-        let mut grph = Graph::<String, f64, petgraph::Undirected>::new_undirected();
-        let n0 = grph.add_node("n0".to_string());
-        let n1 = grph.add_node("n1".to_string());
-        grph.add_edge(n0, n1, 1.0);
-        let components = biconnected_components(&grph);
-        assert_eq!(components.len(), 1);
-        assert_eq!(components[0].node_count(), 2);
-    }
-
-    #[test]
-    fn test_mwpm_odd_count_returns_empty() {
-        let dist = vec![
-            vec![0.0, 1.0, 2.0],
-            vec![1.0, 0.0, 3.0],
-            vec![2.0, 3.0, 0.0],
-        ];
-        let matching = min_weight_perfect_matching(&dist, 3);
-        assert!(matching.is_empty());
-    }
-
-    #[test]
-    fn test_mwpm_n_less_than_2() {
-        let dist = vec![vec![0.0]];
-        let matching = min_weight_perfect_matching(&dist, 1);
-        assert!(matching.is_empty());
-    }
-
-    #[test]
-    fn test_get_edge_weight() {
-        let mut grph = Graph::<String, f64, petgraph::Undirected>::new_undirected();
-        let n0 = grph.add_node("n0".to_string());
-        let n1 = grph.add_node("n1".to_string());
-        grph.add_edge(n0, n1, 42.0);
-        assert!((get_edge_weight(&grph, "n0--n1") - 42.0).abs() < 1e-10);
-        assert!((get_edge_weight(&grph, "n0--n2") - 1.0).abs() < 1e-10);
-        assert!((get_edge_weight(&grph, "invalid") - 1.0).abs() < 1e-10);
-    }
-
-    #[test]
-    fn test_validate_max_cut_simple() {
-        let mut grph = Graph::<String, f64, petgraph::Undirected>::new_undirected();
-        let n0 = grph.add_node("n0".to_string());
-        let n1 = grph.add_node("n1".to_string());
-        grph.add_edge(n0, n1, 5.0);
+    fn validate_detects_odd_cycle() {
+        let grph = triangle();
         let mut cut = HashSet::new();
-        cut.insert("n0--n1".to_string());
+        cut.insert("a--b".to_string());
+        cut.insert("b--c".to_string());
+        cut.insert("a--c".to_string());
+        let (valid, _) = validate_max_cut(&grph, &cut);
+        assert!(!valid);
+    }
+
+    #[test]
+    fn validate_accepts_a_valid_cut() {
+        let grph = triangle();
+        let mut cut = HashSet::new();
+        cut.insert("a--b".to_string());
+        cut.insert("b--c".to_string());
         let (valid, weight) = validate_max_cut(&grph, &cut);
         assert!(valid);
-        assert!((weight - 5.0).abs() < 1e-10);
+        assert!((weight - 15.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn grid_with_diagonal_matches_reference() {
+        // Cross-validated against the Python `netlistx` reference on the same
+        // unit-weight construction. The 10x10 case has ~160 odd faces, which the
+        // previous exponential bitmask matching could never handle.
+        for (m, n, expected) in [(3usize, 3usize, 24.0), (6, 6, 84.0), (10, 10, 220.0)] {
+            let mut grph: NetGraph = Graph::new_undirected();
+            let mut nodes: HashMap<(usize, usize), NodeIndex> = HashMap::new();
+            for r in 0..=m {
+                for c in 0..=n {
+                    nodes.insert((r, c), grph.add_node(format!("r{}c{}", r, c)));
+                }
+            }
+            for r in 0..=m {
+                for c in 0..=n {
+                    if c < n {
+                        grph.add_edge(nodes[&(r, c)], nodes[&(r, c + 1)], 1.0);
+                    }
+                    if r < m {
+                        grph.add_edge(nodes[&(r, c)], nodes[&(r + 1, c)], 1.0);
+                    }
+                    if r < m && c < n {
+                        grph.add_edge(nodes[&(r, c)], nodes[&(r + 1, c + 1)], 1.0);
+                    }
+                }
+            }
+            let cut = solve_hadlock_max_cut(&grph);
+            let (valid, weight) = validate_max_cut(&grph, &cut);
+            assert!(valid, "m={} n={} produced a non-bipartite cut", m, n);
+            assert!(
+                (weight - expected).abs() < 1e-9,
+                "m={} n={} expected {} got {}",
+                m,
+                n,
+                expected,
+                weight
+            );
+        }
     }
 }

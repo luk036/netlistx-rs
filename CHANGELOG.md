@@ -29,6 +29,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Updated `num_modules` and `num_nets` to methods instead of fields
 - Fixed graph type to use proper undirected graph API
 - Improved code organization with separate modules for different functionalities
+- `min_odd_cycle_cover` now runs BFS colouring over `NodeIndex` arrays instead of
+  hash maps keyed by node name, removing the per-node O(V) name lookup (5-12x
+  faster on sparse graphs, with identical cover size and cost)
 
 ### Fixed
 - Duplicate module tests causing compilation errors

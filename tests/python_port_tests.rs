@@ -1454,7 +1454,6 @@ fn test_pd_cover_odd_cycle_square_and_triangle() {
 #[test]
 fn test_hadlock_triangle_exact_value() {
     // Triangle with weights {5, 10, 3}: max cut = 5+10+3 - 3 = 15
-    // NOTE: Rust hadlock uses simplified planar embedding; verify basic validity
     let mut grph = petgraph::Graph::<String, f64, petgraph::Undirected>::new_undirected();
     let n0 = grph.add_node("n0".to_string());
     let n1 = grph.add_node("n1".to_string());
@@ -1463,17 +1462,15 @@ fn test_hadlock_triangle_exact_value() {
     grph.add_edge(n1, n2, 10.0);
     grph.add_edge(n2, n0, 3.0);
     let cut = solve_hadlock_max_cut(&grph);
-    let all_edges = all_edges_set(&grph);
-    for ek in &cut {
-        assert!(all_edges.contains(ek), "Cut edge {} not in graph", ek);
-    }
-    assert!(!cut.is_empty());
+    let (valid, weight) = validate_max_cut(&grph, &cut);
+    assert!(valid);
+    assert!((weight - 15.0).abs() < 1e-10);
+    assert_eq!(cut.len(), 2);
 }
 
 #[test]
 fn test_hadlock_default_weight_one() {
     // Triangle with default weight=1
-    // NOTE: Rust hadlock uses simplified planar embedding; verify basic validity
     let mut grph = petgraph::Graph::<String, f64, petgraph::Undirected>::new_undirected();
     let n0 = grph.add_node("n0".to_string());
     let n1 = grph.add_node("n1".to_string());
@@ -1482,17 +1479,15 @@ fn test_hadlock_default_weight_one() {
     grph.add_edge(n1, n2, 1.0);
     grph.add_edge(n2, n0, 1.0);
     let cut = solve_hadlock_max_cut(&grph);
-    let all_edges = all_edges_set(&grph);
-    for ek in &cut {
-        assert!(all_edges.contains(ek), "Cut edge {} not in graph", ek);
-    }
-    assert!(!cut.is_empty());
+    let (valid, weight) = validate_max_cut(&grph, &cut);
+    assert!(valid);
+    assert!((weight - 2.0).abs() < 1e-10);
 }
 
 #[test]
 fn test_hadlock_square_diagonal() {
-    // Square with one diagonal
-    // NOTE: Rust hadlock uses simplified planar embedding; verify basic validity
+    // Square with one diagonal: total 32, lightest odd-cycle edge is the
+    // diagonal (weight 2), so the max cut is 30.
     let mut grph = petgraph::Graph::<String, f64, petgraph::Undirected>::new_undirected();
     let n1 = grph.add_node("n1".to_string());
     let n2 = grph.add_node("n2".to_string());
@@ -1504,14 +1499,10 @@ fn test_hadlock_square_diagonal() {
     grph.add_edge(n4, n1, 10.0);
     grph.add_edge(n1, n3, 2.0);
     let cut = solve_hadlock_max_cut(&grph);
-    let all_edges = all_edges_set(&grph);
-    for ek in &cut {
-        assert!(all_edges.contains(ek), "Cut edge {} not in graph", ek);
-    }
-    assert!(
-        !cut.is_empty(),
-        "Cut should not be empty for square with diagonal"
-    );
+    let (valid, weight) = validate_max_cut(&grph, &cut);
+    assert!(valid);
+    assert!((weight - 30.0).abs() < 1e-10);
+    assert!(!cut.contains("n1--n3"), "the diagonal must be excluded");
 }
 
 #[test]
@@ -1532,21 +1523,6 @@ fn test_hadlock_validate_invalid_cut() {
     let (valid, _val) = validate_max_cut(&grph, &cut);
     // The cut subgraph contains a triangle (odd cycle), so it should NOT be bipartite
     assert!(!valid, "Triangle cut should be invalid (not bipartite)");
-}
-
-/// Extract all edge keys from a graph (public helper for hadlock tests).
-fn all_edges_set(grph: &petgraph::Graph<String, f64, petgraph::Undirected>) -> HashSet<String> {
-    let mut edges = HashSet::new();
-    for edge_idx in grph.edge_indices() {
-        let (u, v) = grph.edge_endpoints(edge_idx).unwrap();
-        let key = if grph[u] < grph[v] {
-            format!("{}--{}", grph[u], grph[v])
-        } else {
-            format!("{}--{}", grph[v], grph[u])
-        };
-        edges.insert(key);
-    }
-    edges
 }
 
 // ============================================================================
@@ -1829,8 +1805,8 @@ fn test_matching_scattered_star_graph() {
 
 #[test]
 fn test_hadlock_graph_with_bridge() {
-    // Two triangles connected by a single bridge edge
-    // NOTE: Rust hadlock uses simplified planar embedding
+    // Two triangles connected by a single bridge edge. Max cut = triangle
+    // (9 - 2) + bridge (1) + triangle (18 - 5) = 21.
     let mut grph = petgraph::Graph::<String, f64, petgraph::Undirected>::new_undirected();
     let nodes: Vec<_> = (0..6).map(|i| grph.add_node(format!("n{}", i))).collect();
     grph.add_edge(nodes[0], nodes[1], 2.0);
@@ -1842,11 +1818,9 @@ fn test_hadlock_graph_with_bridge() {
     grph.add_edge(nodes[5], nodes[3], 7.0);
 
     let cut = solve_hadlock_max_cut(&grph);
-    let all_edges = all_edges_set(&grph);
-    for ek in &cut {
-        assert!(all_edges.contains(ek), "Cut edge {} not in graph", ek);
-    }
-    assert!(!cut.is_empty());
+    let (valid, weight) = validate_max_cut(&grph, &cut);
+    assert!(valid);
+    assert!((weight - 21.0).abs() < 1e-10);
 }
 
 #[test]
@@ -1864,8 +1838,7 @@ fn test_hadlock_tiny_component() {
 
 #[test]
 fn test_hadlock_two_separate_triangles() {
-    // Two disconnected triangles
-    // NOTE: Rust hadlock uses simplified planar embedding
+    // Two disconnected triangles: (9 - 2) + (18 - 5) = 20.
     let mut grph = petgraph::Graph::<String, f64, petgraph::Undirected>::new_undirected();
     let nodes: Vec<_> = (0..6).map(|i| grph.add_node(format!("n{}", i))).collect();
     grph.add_edge(nodes[0], nodes[1], 2.0);
@@ -1876,17 +1849,15 @@ fn test_hadlock_two_separate_triangles() {
     grph.add_edge(nodes[5], nodes[3], 7.0);
 
     let cut = solve_hadlock_max_cut(&grph);
-    let all_edges = all_edges_set(&grph);
-    for ek in &cut {
-        assert!(all_edges.contains(ek), "Cut edge {} not in graph", ek);
-    }
-    assert!(!cut.is_empty());
+    let (valid, weight) = validate_max_cut(&grph, &cut);
+    assert!(valid);
+    assert!((weight - 20.0).abs() < 1e-10);
 }
 
 #[test]
 fn test_hadlock_odd_faces_different_path_weights() {
-    // Triangle with very different edge weights
-    // NOTE: Rust hadlock uses simplified planar embedding; check basic validity
+    // Triangle with very different edge weights: total 102, the lightest edge
+    // (weight 1) is excluded, so the max cut is 101.
     let mut grph = petgraph::Graph::<String, f64, petgraph::Undirected>::new_undirected();
     let n0 = grph.add_node("n0".to_string());
     let n1 = grph.add_node("n1".to_string());
@@ -1896,11 +1867,9 @@ fn test_hadlock_odd_faces_different_path_weights() {
     grph.add_edge(n2, n0, 1.0);
 
     let cut = solve_hadlock_max_cut(&grph);
-    let all_edges = all_edges_set(&grph);
-    for ek in &cut {
-        assert!(all_edges.contains(ek), "Cut edge {} not in graph", ek);
-    }
-    assert!(!cut.is_empty());
+    let (valid, weight) = validate_max_cut(&grph, &cut);
+    assert!(valid);
+    assert!((weight - 101.0).abs() < 1e-10);
 }
 
 // ============================================================================
