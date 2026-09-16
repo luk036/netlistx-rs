@@ -6,6 +6,7 @@ pub mod hadlock;
 pub mod io;
 pub mod netlist;
 pub mod netlist_algo;
+pub mod planar;
 pub mod rand_cover;
 pub mod rand_cover_gpu;
 pub mod statistics;
