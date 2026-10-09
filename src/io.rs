@@ -838,7 +838,7 @@ impl<'de, 'a> DeserializeSeed<'de> for NetnamesSeed<'a> {
                                                 ) -> Result<<Self as DeserializeSeed<'de>>::Value, D::Error>
                                                 where
                                                     D: Deserializer<'de>,
-                                                {
+{
                                                     struct BitsVisitor<'a> {
                                                         data: &'a mut YosysParts,
                                                     }
